@@ -478,11 +478,30 @@ export function ensureReadability(
   let iterations = 0
   const maxIterations = 100
 
+  // Move *away from the background*: darken on a light background, lighten on a dark
+  // one. The direction used to be taken from the foreground's own `isLight()`, which
+  // for a light background means a mid-dark foreground gets lightened — straight
+  // toward the background — so the loop oscillated around the isLight threshold and
+  // gave up after 100 iterations. Measured before the fix: 617 of 3360 light-mode UI
+  // keys ended below their floor.
+  const goDarker = bgColor.isLight()
+
   while (color.contrast(bgColor) < minContrast && iterations < maxIterations) {
-    color = color.isLight()
+    color = goDarker
       ? color.darken(0.05).saturate(0.05)
       : color.lighten(0.05).saturate(0.05)
     iterations++
+  }
+
+  // Relative darken/lighten converge slowly for some inputs and cannot reach the floor
+  // at all against a mid-tone background. Fall back to whichever pole actually maximises
+  // contrast, so the floor is met wherever the background physically allows it.
+  if (color.contrast(bgColor) < minContrast) {
+    const black = Color('#000000')
+    const white = Color('#FFFFFF')
+    const best =
+      black.contrast(bgColor) >= white.contrast(bgColor) ? black : white
+    if (best.contrast(bgColor) > color.contrast(bgColor)) color = best
   }
 
   return color.hex()

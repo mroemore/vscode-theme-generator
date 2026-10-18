@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useEffect, useState } from 'react'
+import React from 'react'
 
 import { useTheme } from '@/contexts/ThemeContext'
 
@@ -23,88 +23,25 @@ import {
 import { ModeToggle } from './ModeToggle'
 
 import { ColorScheme } from '@/lib/types/colors'
-import { randomInteger } from '@/lib/utils/math'
 
 const ThemeControls: React.FC = () => {
   const {
-    isDark,
     baseHue,
     scheme,
     uiSaturation,
     syntaxSaturation,
-    lockedColors,
     setBaseHue,
     setUiSaturation,
     setSyntaxSaturation,
     setScheme,
-    generateColors,
+    randomizeTheme,
+    regenerateUnlocked,
     regenerateAnsiColors,
   } = useTheme()
 
-  useEffect(() => {
-    handleRandomize()
-  }, [])
-
-  const handleRandomize = (few = false) => {
-    const newBaseHue = Math.floor(Math.random() * 360)
-    const newUiSaturation = randomInteger(15, 65)
-    const newSyntaxSaturation = randomInteger(20, 65)
-    const schemeValues = Object.values(ColorScheme).filter(
-      (value) => typeof value === 'number'
-    ) as number[]
-    const newScheme = schemeValues[
-      Math.floor(Math.random() * schemeValues.length)
-    ] as ColorScheme
-
-    // Update the state values immediately
-    setBaseHue(newBaseHue)
-    setUiSaturation(newUiSaturation)
-    setSyntaxSaturation(newSyntaxSaturation)
-    setScheme(newScheme)
-
-    // Then generate colors with these new values
-    generateColors({
-      isDark,
-      baseHue: newBaseHue,
-      uiSaturation: newUiSaturation,
-      syntaxSaturation: newSyntaxSaturation,
-      scheme: newScheme,
-      lockedColors: Array.from(lockedColors),
-      forceRegenerate: true,
-      few: true,
-    })
-  }
-
-  const handleRegenerateUnlockedColors = () => {
-    // Add small random variations to the current values
-    const hueVariation = Math.floor(Math.random() * 30) - 15 // -15 to +15
-    const saturationVariation = Math.floor(Math.random() * 20) - 10 // -10 to +10
-
-    const newBaseHue = (baseHue + hueVariation + 360) % 360
-    const newUiSaturation = Math.max(
-      0,
-      Math.min(100, uiSaturation + saturationVariation)
-    )
-    const newSyntaxSaturation = Math.max(
-      0,
-      Math.min(100, syntaxSaturation + saturationVariation)
-    )
-
-    setBaseHue(newBaseHue)
-    setUiSaturation(newUiSaturation)
-    setSyntaxSaturation(newSyntaxSaturation)
-
-    generateColors({
-      isDark,
-      baseHue: newBaseHue,
-      uiSaturation: newUiSaturation,
-      syntaxSaturation: newSyntaxSaturation,
-      scheme,
-      lockedColors: Array.from(lockedColors),
-      forceRegenerate: true,
-      few: true,
-    })
-  }
+  // There is no mount-time randomize any more: the provider bootstraps a full theme
+  // synchronously, so the first paint is already a generated palette rather than the
+  // default one being replaced a tick later.
 
   const getSaturationGradient = (baseHue: number) => `
     linear-gradient(to right, 
@@ -112,15 +49,6 @@ const ThemeControls: React.FC = () => {
       hsl(${baseHue}, 100%, 50%)
     )
   `
-
-  const handleSchemeChange = (newScheme: ColorScheme) => {
-    setScheme(newScheme)
-    generateColors({
-      scheme: newScheme,
-      forceRegenerate: true,
-      few: true,
-    })
-  }
 
   return (
     <section className="flex flex-col gap-5 w-full">
@@ -135,7 +63,7 @@ const ThemeControls: React.FC = () => {
                     <label className="text-xs">Color Scheme:</label>
                     <Select
                       onValueChange={(value) =>
-                        handleSchemeChange(Number(value) as ColorScheme)
+                        setScheme(Number(value) as ColorScheme)
                       }
                       value={scheme.toString()}
                     >
@@ -280,7 +208,7 @@ const ThemeControls: React.FC = () => {
               <Button
                 className="w-full text-xs"
                 size="sm"
-                onClick={() => handleRandomize(false)}
+                onClick={() => randomizeTheme('full')}
               >
                 Randomize Full
               </Button>
@@ -299,7 +227,7 @@ const ThemeControls: React.FC = () => {
               <Button
                 className="w-full text-xs"
                 size="sm"
-                onClick={() => handleRandomize(true)}
+                onClick={() => randomizeTheme('base')}
               >
                 Randomize with Few Colors
               </Button>
@@ -316,7 +244,7 @@ const ThemeControls: React.FC = () => {
               <Button
                 className="w-full text-xs"
                 size="sm"
-                onClick={handleRegenerateUnlockedColors}
+                onClick={regenerateUnlocked}
               >
                 Regenerate Unlocked
               </Button>

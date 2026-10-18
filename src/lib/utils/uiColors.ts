@@ -1,81 +1,106 @@
 import Color from 'color'
 
-import { randomInteger } from '@/lib/utils/math'
 import { generateSchemeColors } from './colorUtils'
-import { ColorScheme } from '@/lib/types/colors'
-import type { UIColors, ThemeGenerationOptions } from '@/lib/types/colors'
+import { ColorScheme } from '@/lib/colors/schemes'
+import type { UIColors } from '@/lib/types/colors'
 import { UI_KEYS, uiSpec } from '@/lib/colors/ui'
-import { applyReadability, resolveHue, resolveLightness } from '@/lib/colors/spec'
+import {
+  applyReadability,
+  resolveHueExpr,
+  resolveLightnessExpr,
+} from '@/lib/colors/spec'
+import type { Assignment } from '@/lib/colors/assignment'
 
-// Generation is driven row-by-row from `uiSpec`. Two invariants hold the output stable:
+// UI (theme) colours are a pure function of the assignment plus the header values —
+// no randomness is consumed here. See `src/lib/colors/assignment.ts` for why: the
+// randomness belongs to the theme, not to the moment of generation, so re-resolving
+// with a new Base Hue rotates the palette instead of re-dealing it.
 //
-//  1. Rows are evaluated in `UI_KEYS` order, which is the order the original object
-//     literal used. Every row's draws extend the shared `Math.random` sequence.
-//  2. Within a row the hue index is drawn *before* the lightness expression, mirroring
-//     the left-to-right argument evaluation of the original `generateColor(...)` call.
-//
-// A key already supplied in `initialColors` short-circuits before drawing anything —
-// the original used `initialColors.X || generateColor(...)`, so an overridden key
-// consumed no randomness. `.tmp_files/parity.ts` fails if either invariant drifts.
-export function generateThemeColors(
-  options: ThemeGenerationOptions,
-  initialColors: Partial<UIColors> = {},
-  forceRegenerate: boolean = false
-): {
-  colors: UIColors
-  schemeHues: number[]
+// A key supplied in `locked` short-circuits before anything is computed, and is also
+// skipped by the readability pass — exactly as the previous generator treated its
+// `initialColors` overrides.
+
+export interface ThemeResolveInput {
+  assignment: Assignment
   scheme: ColorScheme
-} {
-  const {
-    isDark,
-    baseHue = Math.random() * 360,
-    uiSaturation = isDark ? randomInteger(15, 45) : randomInteger(45, 75),
-    scheme = ColorScheme.Analogous,
-    few,
-  } = options
+  baseHue: number
+  isDark: boolean
+  uiSaturation: number
+}
 
-  const schemeHues = generateSchemeColors(baseHue, scheme)
+/** The harmonic pools the syntax side draws from. */
+export interface Pools {
+  base: number[]
+  ac1?: number[]
+  ac2?: number[]
+}
 
-  const bgBase = isDark ? randomInteger(0, 15) : randomInteger(85, 100)
-  const fgBase = isDark ? randomInteger(85, 100) : randomInteger(0, 15)
+/**
+ * The mode chooses a *range* for each base lightness, and the assignment supplies a
+ * normalised roll inside it: dark → background 0-15 / foreground 85-100, light → the
+ * reverse. Storing the roll rather than the value is what lets the dark/light toggle
+ * re-range the same "how dark" choice instead of rolling a near-black background into
+ * a light theme.
+ */
+function baseLightnessFromRoll(
+  roll: number,
+  isDark: boolean,
+  isBackground: boolean
+): number {
+  const low = isDark === isBackground
+  return low ? Math.floor(roll * 16) : 85 + Math.floor(roll * 16)
+}
+
+function generateColor(
+  hue: number,
+  saturation: number,
+  lightness: number,
+  jitter: { hueJitter: number; satJitter: number; lightJitter: number }
+): string {
+  const h = (hue + (jitter.hueJitter * 10 - 5) + 360) % 360
+  const s = Math.max(2, Math.min(100, saturation + (jitter.satJitter * 20 - 10)))
+  const l = Math.max(0, Math.min(100, lightness + (jitter.lightJitter * 10 - 5)))
+  return Color.hsl(h, s, l).hex()
+}
+
+/** Resolve the 16 UI colours from an assignment. Consumes no randomness. */
+export function resolveUiColors(
+  input: ThemeResolveInput,
+  locked: Partial<UIColors> = {}
+): UIColors {
+  const { assignment, scheme, baseHue, isDark, uiSaturation } = input
   const mode = isDark ? 'dark' : 'light'
+  const base = generateSchemeColors(baseHue, scheme)
 
-  const generateColor = (
-    hue: number,
-    saturation: number,
-    lightness: number
-  ) => {
-    if (!forceRegenerate) {
-      const randomHueShift = Math.random() * 10 - 5
-      const randomSaturationShift = Math.random() * 20 - 10
-      const randomLightnessShift = Math.random() * 10 - 5
-
-      hue = (hue + randomHueShift + 360) % 360
-      saturation = Math.max(
-        2,
-        Math.min(100, saturation + randomSaturationShift)
-      )
-      lightness = Math.max(0, Math.min(100, lightness + randomLightnessShift))
-    }
-
-    const color = Color.hsl(hue, saturation, lightness).hex()
-    return color
-  }
+  const bgBase = baseLightnessFromRoll(assignment.ui.bgRoll, isDark, true)
+  const fgBase = baseLightnessFromRoll(assignment.ui.fgRoll, isDark, false)
 
   const colors = {} as UIColors
 
   for (const key of UI_KEYS) {
-    const spec = uiSpec[key]
-
-    const provided = initialColors[key]
+    const provided = locked[key]
     if (provided) {
       colors[key] = provided
       continue
     }
 
-    const hue = resolveHue(spec.hue, schemeHues)
-    const lightness = resolveLightness(spec.lightness[mode], { bgBase, fgBase })
-    const generated = generateColor(hue, uiSaturation * spec.sat, lightness)
+    const spec = uiSpec[key]
+    const entry = assignment.ui.entries[key]
+
+    const poolHue = base[entry.slotIndex % base.length]
+    const hue = resolveHueExpr(spec.hue, poolHue)
+    const lightness = resolveLightnessExpr(
+      spec.lightness[mode],
+      { bgBase, fgBase },
+      entry.exprJitter
+    )
+
+    const generated = generateColor(
+      hue,
+      uiSaturation * spec.sat,
+      lightness,
+      entry
+    )
 
     colors[key] = spec.alphaSuffix
       ? Color(generated).hex() + spec.alphaSuffix
@@ -85,31 +110,31 @@ export function generateThemeColors(
   // Readability pass. `readability: { kind: 'none' }` is how the exclusion set
   // (lineHighlight, selection, findMatch, BORDER, BG1-3, FG3) is expressed.
   for (const key of UI_KEYS) {
-    if (initialColors[key]) continue
+    if (locked[key]) continue
     const policy = uiSpec[key].readability
     if (policy.kind === 'none') continue
     colors[key] = applyReadability(colors[key], colors.BG1, policy, isDark)
   }
 
-  // In "full" pool mode the accent colours contribute their own harmonic pools to
-  // the syntax side. Note this reads the *post-readability* AC1/AC2.
+  return colors
+}
+
+/**
+ * Build the syntax pools. In `full` mode the accent colours contribute their own
+ * harmonic pools on top of the base one; note this reads the *post-readability*
+ * AC1/AC2, which is what the previous generator did too. In `base` mode there is one
+ * pool, and slots naming `ac1`/`ac2` fall back into it at the same index.
+ */
+export function buildPools(input: ThemeResolveInput, colors: UIColors): Pools {
+  const base = generateSchemeColors(input.baseHue, input.scheme)
+  if (input.assignment.poolMode !== 'full') return { base }
+
   const ac1Hue = Color(colors.AC1).hue()
   const ac2Hue = Color(colors.AC2).hue()
+  const fromAccent = (h: number) =>
+    generateSchemeColors(Number.isFinite(h) ? h : 0, input.scheme)
 
-  let updatedSchemeHues = [...schemeHues]
-
-  if (!few) {
-    const ac1AdditionalHues = generateSchemeColors(ac1Hue, scheme)
-    const ac2AdditionalHues = generateSchemeColors(ac2Hue, scheme)
-
-    updatedSchemeHues = [
-      ...schemeHues,
-      ...ac1AdditionalHues,
-      ...ac2AdditionalHues,
-    ]
-  }
-
-  return { colors, schemeHues: updatedSchemeHues, scheme }
+  return { base, ac1: fromAccent(ac1Hue), ac2: fromAccent(ac2Hue) }
 }
 
 export function updateThemeColorsWithSaturation(
@@ -122,7 +147,7 @@ export function updateThemeColorsWithSaturation(
     saturationMultiplier: number
   ) => {
     const hsl = Color(color).hsl()
-    let newSaturation = Math.max(
+    const newSaturation = Math.max(
       2,
       Math.min(100, newUiSaturation * saturationMultiplier)
     )

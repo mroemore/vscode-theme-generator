@@ -1,38 +1,48 @@
-import { randomInteger } from '@/lib/utils/math'
-import { ensureReadability } from './colorUtils'
-import { SyntaxColors } from '@/lib/types/colors'
 import Color from 'color'
-import { SYNTAX_GROUPS, SYNTAX_KEYS, syntaxSpec } from '@/lib/colors/syntax'
-import { applyReadability, draw } from '@/lib/colors/spec'
+import { ensureReadability } from './colorUtils'
+import type { SyntaxColors } from '@/lib/types/colors'
+import { SYNTAX_KEYS, syntaxSpec } from '@/lib/colors/syntax'
+import { applyReadability, resolveDrawable } from '@/lib/colors/spec'
+import { resolvePoolHue } from '@/lib/colors/assignment'
+import type { Assignment } from '@/lib/colors/assignment'
+import type { Pools } from './uiColors'
 
-// Row-driven from `syntaxSpec`, in `SYNTAX_KEYS` order. Per row the draws land in the
-// order hue-index → lightness-shift → hue-shift, matching the original call's argument
-// evaluation order. The six group pool indices are drawn up-front in `SYNTAX_GROUPS`
-// order; keys without `ownIndex` reuse their group's index and draw nothing for it.
-export function generateSyntaxColors(
-  backgroundColor: string,
-  schemeHues: number[],
-  syntaxSaturation: number = 70,
-  lockedColors: Partial<SyntaxColors> = {},
-  forceRegenerate: boolean = false
+// Syntax colours resolve from three things and nothing else: the assignment, the
+// harmonic `pools`, and the syntax saturation. Consumes no randomness — see
+// `src/lib/colors/assignment.ts`.
+//
+// Each token's hue is `pool[slot.index % len] + hueShift`, so a Base Hue change adds
+// the same δ to every pool-derived token: the relationships hold and the palette
+// rotates as a whole. `comment` is the one token that reads the inverse (low-contrast)
+// lightness base; it is also the only token exempt from the saturation slider, but it
+// is *not* exempt from the readability floor (see `syntaxSpec.comment.readability`).
+
+export interface SyntaxResolveInput {
+  assignment: Assignment
+  pools: Pools
+  syntaxSaturation: number
+  backgroundColor: string
+}
+
+export function resolveSyntaxColors(
+  input: SyntaxResolveInput,
+  locked: Partial<SyntaxColors> = {}
 ): SyntaxColors {
+  const { assignment, pools, syntaxSaturation, backgroundColor } = input
   const baseColor = Color(backgroundColor)
   const isDark = baseColor.isDark()
   const baseLightness = isDark ? 80 : 25
   const inverseBaseLightness = isDark ? 15 : 85
 
   const generateColor = (
-    hueIndex: number,
-    saturationMultiplier: number = 1,
-    lightnessShift: number = 0,
-    hueShift: number = 0,
-    highContrast: boolean = true
+    poolHue: number,
+    saturationMultiplier: number,
+    lightnessShift: number,
+    hueShift: number,
+    highContrast: boolean
   ) => {
-    const hue = (schemeHues[hueIndex % schemeHues.length] + hueShift) % 360
-    const saturation = Math.max(
-      2,
-      Math.min(100, syntaxSaturation * saturationMultiplier)
-    )
+    const hue = (poolHue + hueShift) % 360
+    const saturation = Math.max(2, Math.min(100, syntaxSaturation * saturationMultiplier))
     const lightness = Math.min(
       100,
       Math.max(
@@ -45,33 +55,23 @@ export function generateSyntaxColors(
     return Color.hsl(hue, saturation, lightness).hex()
   }
 
-  const groupIndex: Record<string, number> = {}
-  for (const group of SYNTAX_GROUPS) {
-    groupIndex[group] = randomInteger(0, schemeHues.length - 1)
-  }
-
   const syntaxColors = {} as SyntaxColors
 
   for (const key of SYNTAX_KEYS) {
-    const spec = syntaxSpec[key]
-
-    const locked = lockedColors[key]
-    if (locked) {
-      syntaxColors[key] = locked
+    const lockedColor = locked[key]
+    if (lockedColor) {
+      syntaxColors[key] = lockedColor
       continue
     }
 
-    const hueIndex = spec.ownIndex
-      ? randomInteger(0, schemeHues.length - 1)
-      : groupIndex[spec.group!]
-    const lightnessShift = draw(spec.lightShift)
-    const hueShift = draw(spec.hueShift)
+    const spec = syntaxSpec[key]
+    const entry = assignment.syntax.entries[key]
 
     syntaxColors[key] = generateColor(
-      hueIndex,
+      resolvePoolHue(pools, entry.slot),
       spec.sat,
-      lightnessShift,
-      hueShift,
+      resolveDrawable(entry.lightShiftRoll, spec.lightShift),
+      resolveDrawable(entry.hueShiftRoll, spec.hueShift),
       !spec.inverseLightness
     )
   }
@@ -79,7 +79,7 @@ export function generateSyntaxColors(
   // Readability. Every key — `comment` included — is floored at 5.5; `comment` is then
   // additionally pulled into its low-contrast band by `floor-then-band`.
   for (const key of SYNTAX_KEYS) {
-    if (lockedColors[key]) continue
+    if (locked[key]) continue
     syntaxColors[key] = applyReadability(
       syntaxColors[key],
       backgroundColor,
@@ -102,7 +102,7 @@ export function updateSyntaxColorsWithSaturation(
     saturationMultiplier: number
   ) => {
     const hsl = Color(color).hsl()
-    let newSaturation = Math.max(
+    const newSaturation = Math.max(
       2,
       Math.min(100, newSyntaxSaturation * saturationMultiplier)
     )
@@ -111,8 +111,8 @@ export function updateSyntaxColorsWithSaturation(
 
   const updatedColors: SyntaxColors = { ...currentColors }
 
-  // Saturation and readability share one skip condition in the original (both exclude
-  // `comment` and locked keys), so a single pass is equivalent.
+  // Saturation and readability share one skip condition (both exclude `comment` and
+  // locked keys), so a single pass is equivalent.
   for (const key of SYNTAX_KEYS) {
     const spec = syntaxSpec[key]
     if (spec.sliderExcluded) continue

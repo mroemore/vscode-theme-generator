@@ -20,10 +20,10 @@ export {
 } from './ansi'
 export {
   applyReadability,
-  draw,
   makeInitial,
-  resolveHue,
-  resolveLightness,
+  resolveDrawable,
+  resolveHueExpr,
+  resolveLightnessExpr,
   type Drawable,
   type HueExpr,
   type IntRange,
@@ -32,3 +32,16 @@ export {
   type Readability,
 } from './spec'
 export { ColorScheme } from './schemes'
+export {
+  drawAssignment,
+  drawTheme,
+  redrawAnsi,
+  resolvePoolHue,
+  schemePoolLength,
+  type Assignment,
+  type Assignment as ThemeAssignment,
+  type PoolMode,
+  type PoolName,
+  type PoolSlot,
+  type ThemeSeed,
+} from './assignment'

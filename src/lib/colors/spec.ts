@@ -5,26 +5,25 @@
 // five places to touch per colour. Each domain now declares one spec record
 // (`uiSpec` / `syntaxSpec` / `ansiSpec`) and everything else derives from it.
 //
-// ── The one rule you must not break ────────────────────────────────────────────
-// Generation is driven by `Math.random`, and every downstream colour depends on the
-// *sequence* of draws, not just the count. The generators therefore evaluate
-// hue → lightness → jitter, in that order, exactly as the original object literals
-// did. Reordering two `randomInteger` calls in one spec row silently reshuffles every
-// later colour. `.tmp_files/parity.ts` diffs 840 seeded combinations and records each
-// combination's draw count, so a reordering shows up as a non-zero diff — keep it green.
+// ── Roll ranges, not drawn values ──────────────────────────────────────────────
+// There is no randomness in this file, and there must be none: since Phase B every
+// draw belongs to an `Assignment` (`src/lib/colors/assignment.ts`), and generation is
+// a pure resolution of that assignment against these ranges. A range here only says
+// *how to interpret* a stored roll in [0, 1); tuning it re-interprets the same roll
+// rather than reshaping the theme. Compare `assignment.ts` for why that matters.
 
-import { randomInteger } from '@/lib/utils/math'
 import { adjustCommentColor, ensureReadability } from '@/lib/utils/colorUtils'
 
-/** An integer range drawn with `randomInteger`; `sub` negates the draw. */
+/** An integer range; a stored roll in [0, 1) is interpreted against it. `sub` negates. */
 export type IntRange = { min: number; max: number; sub?: boolean }
 
-/** A literal, or an integer range drawn at generation time. */
+/** A literal, or an integer range a stored roll resolves into. */
 export type Drawable = number | IntRange
 
-export function draw(value: Drawable): number {
+/** Interpret a stored roll in [0, 1) against a literal-or-range. The only way to read a range. */
+export function resolveDrawable(roll: number, value: Drawable): number {
   if (typeof value === 'number') return value
-  const n = randomInteger(value.min, value.max)
+  const n = value.min + Math.floor(roll * (value.max - value.min + 1))
   return value.sub ? -n : n
 }
 
@@ -62,21 +61,21 @@ export interface KeySpec {
   sliderExcluded?: boolean
 }
 
-export function resolveHue(hue: HueExpr, pool: number[]): number {
-  return hue.kind === 'fixed' ? hue.h : pool[randomInteger(0, pool.length - 1)]
+/** A fixed hue is its own value; a pool hue comes from the assignment's slot. */
+export function resolveHueExpr(hue: HueExpr, poolHue: number): number {
+  return hue.kind === 'fixed' ? hue.h : poolHue
 }
 
-export function resolveLightness(
+/** `lightness` for a UI row is either a constant or an offset from a mode-chosen base. */
+export function resolveLightnessExpr(
   expr: LightnessExpr,
-  ctx: { bgBase: number; fgBase: number }
+  ctx: { bgBase: number; fgBase: number },
+  roll: number
 ): number {
   if (expr.kind === 'const') return expr.value
   let value = expr.base === 'bgBase' ? ctx.bgBase : ctx.fgBase
   if (expr.add !== undefined) value += expr.add
-  if (expr.jitter) {
-    const n = randomInteger(expr.jitter.min, expr.jitter.max)
-    value += expr.jitter.sub ? -n : n
-  }
+  if (expr.jitter) value += resolveDrawable(roll, expr.jitter)
   return value
 }
 
