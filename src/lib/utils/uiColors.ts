@@ -1,7 +1,7 @@
 import Color from 'color'
 
-import { generateSchemeColors } from './colorUtils'
-import { ColorScheme } from '@/lib/colors/schemes'
+import { generateSchemeColors } from '@/lib/colors/schemes'
+import type { ColorScheme } from '@/lib/colors/schemes'
 import type { UIColors } from '@/lib/types/colors'
 import { UI_KEYS, uiSpec } from '@/lib/colors/ui'
 import {
@@ -70,7 +70,7 @@ export function resolveUiColors(
 ): UIColors {
   const { assignment, scheme, baseHue, isDark, uiSaturation } = input
   const mode = isDark ? 'dark' : 'light'
-  const base = generateSchemeColors(baseHue, scheme)
+  const base = generateSchemeColors(baseHue, scheme, assignment.shape)
 
   const bgBase = baseLightnessFromRoll(assignment.ui.bgRoll, isDark, true)
   const fgBase = baseLightnessFromRoll(assignment.ui.fgRoll, isDark, false)
@@ -126,13 +126,21 @@ export function resolveUiColors(
  * pool, and slots naming `ac1`/`ac2` fall back into it at the same index.
  */
 export function buildPools(input: ThemeResolveInput, colors: UIColors): Pools {
-  const base = generateSchemeColors(input.baseHue, input.scheme)
+  const base = generateSchemeColors(
+    input.baseHue,
+    input.scheme,
+    input.assignment.shape
+  )
   if (input.assignment.poolMode !== 'full') return { base }
 
   const ac1Hue = Color(colors.AC1).hue()
   const ac2Hue = Color(colors.AC2).hue()
   const fromAccent = (h: number) =>
-    generateSchemeColors(Number.isFinite(h) ? h : 0, input.scheme)
+    generateSchemeColors(
+      Number.isFinite(h) ? h : 0,
+      input.scheme,
+      input.assignment.shape
+    )
 
   return { base, ac1: fromAccent(ac1Hue), ac2: fromAccent(ac2Hue) }
 }

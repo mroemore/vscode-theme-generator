@@ -29,14 +29,22 @@
 //    "how dark" choice rather than rolling a near-black background into a light theme.
 
 import { mulberry32 } from '@/lib/utils/math'
-import { generateSchemeColors } from '@/lib/utils/colorUtils'
-import { ColorScheme } from './schemes'
+import {
+  SHAPE_CHOICES,
+  generateSchemeColors,
+  schemePoolLength,
+} from './schemes'
+import type { ColorScheme, ShapeParams } from './schemes'
 import { UI_KEYS } from './ui'
 import { SYNTAX_GROUPS, SYNTAX_KEYS, syntaxSpec } from './syntax'
 import { ANSI_KEYS } from './ansi'
 import type { UIKey } from './ui'
 import type { SyntaxGroup, SyntaxKey } from './syntax'
 import type { AnsiKey } from './ansi'
+
+/** Re-exported so `Assignment.shape` keeps a single home — see `schemes.ts`. */
+export type { ShapeParams }
+export { schemePoolLength }
 
 export type PoolMode = 'full' | 'base'
 export type PoolName = 'base' | 'ac1' | 'ac2'
@@ -73,12 +81,6 @@ export interface AnsiEntry {
 }
 
 /** Per-theme shape constants for the schemes that fold a curve rather than rotate. */
-export interface ShapeParams {
-  nestedSides: number[]
-  rosetteK: number
-  torusM: number
-  torusWinding: number[]
-}
 
 export interface Assignment {
   seed: number
@@ -102,12 +104,9 @@ export interface Assignment {
   shape: ShapeParams
 }
 
-/**
- * How many hues a scheme produces. A function of the scheme alone — never of the hue —
- * which is what lets slot indices stay meaningful across a Base Hue change.
- */
-export function schemePoolLength(scheme: ColorScheme): number {
-  return generateSchemeColors(0, scheme).length
+/** Pick one entry of a readonly choice list. */
+function pick<T>(rng: Rng, choices: readonly T[]): T {
+  return choices[Math.floor(rng() * choices.length)]
 }
 
 function pickSlot(rng: Rng, poolMode: PoolMode, poolLength: number): PoolSlot {
@@ -176,10 +175,19 @@ function drawAssignmentWith(
     syntax,
     ansi,
     shape: {
-      nestedSides: [rng(), rng(), rng()].map((r) => 3 + Math.floor(r * 5)),
-      rosetteK: 3 + Math.floor(rng() * 8),
-      torusM: 5 + Math.floor(rng() * 7),
-      torusWinding: [1 + Math.floor(rng() * 4), 1 + Math.floor(rng() * 4)],
+      // Five consecutive side counts from the choice ring — the nested polygon layers,
+      // outer first. Drawn as a window so the layers stay distinct.
+      nestedSides: (() => {
+        const sides = SHAPE_CHOICES.nestedSides
+        const start = Math.floor(rng() * sides.length)
+        return Array.from(
+          { length: SHAPE_CHOICES.nestedLayerCount },
+          (_, i) => sides[(start + i) % sides.length]
+        )
+      })(),
+      rosetteFold: pick(rng, SHAPE_CHOICES.rosetteFold),
+      torusMajor: pick(rng, SHAPE_CHOICES.torusMajor),
+      torusTwist: [pick(rng, SHAPE_CHOICES.torusTwist), pick(rng, SHAPE_CHOICES.torusTwist)],
     },
   }
 }

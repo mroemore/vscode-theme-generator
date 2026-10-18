@@ -8,7 +8,7 @@
 
 - [x] **A — one spec table per domain.** `src/lib/colors/{schemes,spec,ui,syntax,ansi,index}.ts`; generators and saturation updaters and Zod all derive from the tables; four declared behaviour fixes land. Parity harness gates it.
 - [x] **B — stable hue assignment.** `src/lib/colors/assignment.ts`; hue/lightness/roll values drawn once per theme; Base Hue becomes a coherent rotation; `few` wired honestly; ANSI stabilised.
-- [ ] **C — scheme repair.** 8 schemes deleted, 4 repaired to `rotate(baseHue, offsetₖ)`; dropdown 42 → 34; commented-out code removed.
+- [x] **C — scheme repair.** 8 schemes deleted, 4 repaired to `rotate(baseHue, offsetₖ)`; dropdown 42 → 34; commented-out code removed.
 - [ ] **D — Lock All.** One button in the theme panel header; 16 UI keys; no-op disabled.
 - [ ] **E — theme→syntax/ANSI linking.** Link button replaces Copy everywhere; placement mode; one link per target; readability-adjusted by default with a per-colour raw toggle; unlink reverts to the seeded base; hover cross-highlights.
 

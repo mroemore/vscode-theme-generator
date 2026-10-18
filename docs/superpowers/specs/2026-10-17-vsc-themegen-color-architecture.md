@@ -288,7 +288,13 @@ Recommended: **stabilise ANSI here too**, by the same mechanism. Reasons: (a) AN
 
 ### 3.1 The contract
 
-Every entry of `generateSchemeColors(baseHue, scheme)` must be `(baseHue + offsetₖ) mod 360` with `offsetₖ` independent of `baseHue`, and non-negative. Enforced by a property test over `baseHue ∈ 0..359` for every scheme: `hue(baseHue+5) - hue(baseHue) == 5 (mod 360)`, plus `≥ 2` distinct hues.
+Every entry of `generateSchemeColors(baseHue, scheme, shape)` must be `(baseHue + offsetₖ) mod 360` with `offsetₖ` independent of `baseHue`. Enforced by a property test over `baseHue ∈ 0..359` for every scheme: `hue(baseHue+5) - hue(baseHue) == 5 (mod 360)`, plus `≥ 2` distinct hues except for `Monochromatic`, whose single hue *is* its contract.
+
+As built, the contract is structural rather than tested: the scheme table holds `(shape) => number[]` **offsets**, and `baseHue` is not in scope inside it, so a covariant violation is not expressible. Offsets need not be non-negative — they are wrapped once at emit by `normaliseHue`. The test then checks the wrapper, not the table.
+
+Phase C moved the table out of `src/lib/utils/colorUtils.ts` into `src/lib/colors/schemes.ts` (the enum's leaf module), which is also what removed the circular-import question: `colorUtils` no longer knows about schemes at all. `schemeOffsets` and `schemePoolLength` live there with it.
+
+`shape` is a third parameter, defaulted, and comes from `assignment.shape` at every call site — see §3.3.
 
 ### 3.2 Delete eight
 
@@ -428,14 +434,14 @@ The partner's stated order — de-dup, then stability, then schemes, then Lock A
 
 | file | A | B | C | D | E |
 |---|---|---|---|---|---|
-| `src/lib/colors/schemes.ts` | new (enum moved) | — | schemes repaired/removed | — | — |
+| `src/lib/colors/schemes.ts` | new (enum moved) | — | offsets table, repaired/removed, `schemeOffsets`, `schemePoolLength` | — | — |
 | `src/lib/colors/{spec,ui,syntax,ansi,index}.ts` | new | — | via schemes | — | link resolution helper |
-| `src/lib/colors/assignment.ts` | — | new | shape params | — | — |
+| `src/lib/colors/assignment.ts` | — | new | shape params drawn | — | — |
 | `src/lib/types/colors.ts` | derive from spec; re-export `ColorScheme` | assignment type re-export | — | — | link types |
-| `src/lib/utils/uiColors.ts` | iterate spec | resolve assignment | — | — | — |
+| `src/lib/utils/uiColors.ts` | iterate spec | resolve assignment | pass `assignment.shape` | — | — |
 | `src/lib/utils/syntaxColors.ts` | iterate spec | resolve assignment | — | — | link exemption |
 | `src/lib/utils/ansiColors.ts` | iterate spec | stability (§2.5) | — | — | link exemption |
-| `src/lib/utils/colorUtils.ts` | comment floor guarantee | — | 4 repaired, 8 removed | — | — |
+| `src/lib/utils/colorUtils.ts` | comment floor guarantee | — | scheme table moved out; `degreesToRadians` deleted | — | — |
 | `src/contexts/ThemeContext.tsx` | BG1-edit lock fix | assignment state; retire `schemeHues` | — | — | `links`, `hoveredSource`, link actions, `applyLinks` |
 | `src/components/ColorList.tsx` | — | — | — | Lock All | Link button; remove Copy |
 | `src/components/SyntaxColorList.tsx` | — | — | — | — | target pill, icon, tooltip, hover |
@@ -447,12 +453,13 @@ The partner's stated order — de-dup, then stability, then schemes, then Lock A
 
 ## 9. Open questions
 
-Seven; each changes the plan, and each has a recommendation. Items 4 and 5 were surfaced by the builder check.
+All seven are settled. Recorded with the outcome as built, so the doc and the code agree.
 
-1. **`BG1`-edit syntax regeneration discards syntax locks** (§0.1, §1.4 item 4). Fix it so locked tokens survive a background edit (**recommended**), or leave it and document?
-2. **`controlImport`'s single value** (§1.4 item 2). The generator's `0.75` (**recommended** — likely deliberate that imports are dimmer), or the slider's `1.05`? (The UI trio `FG1`/`FG2`/`INFO` I propose unifying on the *slider's* values, since there the generator is the outlier.)
-3. **Linking a locked syntax target** (§5.5). Link overrides the lock, lock retained (**recommended**), or linking blocked while locked?
-4. **The `few` bug** (§0.1, §2.2). "Randomize Full" currently ignores `few` and is identical to "Randomize with Few Colors"; the AC1/AC2 harmonic pools are reachable only through the mode toggle. Recommendation: **wire it honestly** — Full draws `poolMode: 'full'` (base + AC harmonics), Few draws `'base'`. This fixes a lying tooltip and makes the two buttons differ, but it is a visible change: Full palettes get richer, and the initial page load (which calls `handleRandomize()` with its default argument) becomes a Full draw. Alternative: keep both base-only and remove or rename the Full button.
-5. **The three alpha keys as link sources** (`lineHighlight`, `selection`, `findMatch`, §5.2). Recommendation: **allow all 16 and strip alpha at resolution**, since `adjust` should toggle readability only. Alternative: exclude them, so the Link button appears on 13 of 16 theme pills and §5.6's cross product shrinks to 13.
-6. **ANSI stability in Phase B** (§2.5). Recommendation: **yes**, because ANSI currently re-rolls on every BG1 touch and Phase E's ANSI revert is meaningless without a reproducible base.
-7. **Repaired scheme constants** (§3.3). Delegable to the builder; the only ask is to *see* the four repaired schemes on screen once before they are signed off.
+1. **`BG1`-edit discarding syntax locks** (§0.1, §1.4 item 4). **Done — fixed in A.** `ThemeContext` now passes `lockedColors` through every regeneration path.
+2. **`controlImport`'s single value** (§1.4 item 2). **Done — the generator's `0.75`,** per the recommendation. The UI trio `FG1`/`FG2`/`INFO` were unified on the *slider's* values. Both changes landed in step A6 and are itemised in the phase-A commit.
+3. **Linking a locked syntax target** (§5.5). **Link overrides the lock, lock retained** — implemented in Phase E.
+4. **The `few` bug** (§2.2). **Done — wired honestly in B.** `poolMode` moved onto the `Assignment`, so both buttons differ and the initial load is a Full draw. The lying tooltip is now true.
+5. **The three alpha keys as link sources** (§5.2). **All 16 allowed, alpha stripped at resolution** — implemented in Phase E.
+6. **ANSI stability in Phase B** (§2.5). **Done — yes.** ANSI resolves from the assignment's own seed and re-rolls only on `Regenerate ANSI`.
+7. **Repaired scheme constants** (§3.3). **Built; awaiting one on-screen review.** Shape constants now come from `ShapeParams` on the assignment (five consecutive side counts from a choice ring for `NestedPolygons`, a fold order for `RosettePattern`, a major-segment count and two windings for the torus pair). Measured: `Torus` 2→7 distinct hues and 89°→289° arc spread, `DoubleTorus` 3→7 / 90°→256°, `RosettePattern` 2→7 / 90°→309°, `NestedPolygons` 113°→240°.
+
