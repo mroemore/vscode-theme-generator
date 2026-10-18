@@ -40,6 +40,10 @@ const LABELS: Record<ModuleId, string> = {
   preview: 'Preview',
 }
 
+// The editor preview is a viewer, not a control surface, so it holds no pinned slot: no pin
+// control is drawn and a pin stored by an older session is ignored on restore (spec §6.2).
+const NOT_PINNABLE: ReadonlySet<PinTarget> = new Set<PinTarget>(['preview'])
+
 const MobileShell: React.FC = () => {
   const { activeColor } = useTheme()
 
@@ -50,7 +54,8 @@ const MobileShell: React.FC = () => {
   const [restored, setRestored] = useState(false)
 
   useEffect(() => {
-    setPin(readStoredPin())
+    const stored = readStoredPin()
+    setPin(stored !== null && !NOT_PINNABLE.has(stored) ? stored : null)
     setVisible(readStoredVisible())
     setRestored(true)
   }, [])
@@ -131,6 +136,7 @@ const MobileShell: React.FC = () => {
         count={body.count}
         pinned={pin === id}
         onTogglePin={() => togglePin(id)}
+        pinnable={!NOT_PINNABLE.has(id)}
         actions={body.actions}
         fill={fill}
         cast={cast}

@@ -21,6 +21,8 @@ interface ModuleProps {
   count?: number
   pinned: boolean
   onTogglePin: () => void
+  /** False for modules that hold no pinned slot (the editor preview). No pin control is drawn. */
+  pinnable?: boolean
   /** Module-level actions (the colour panels' bulk lock controls), drawn before the pin. */
   actions?: React.ReactNode
   /** 'up' receives the shadow from the module below; 'down' is a pinned module casting onto the scroller */
@@ -35,6 +37,7 @@ const Module: React.FC<ModuleProps> = ({
   count,
   pinned,
   onTogglePin,
+  pinnable = true,
   actions,
   cast = 'up',
   fill,
@@ -85,28 +88,30 @@ const Module: React.FC<ModuleProps> = ({
         )}
         <span style={{ flex: 1 }} />
         {actions}
-        <button
-          type="button"
-          data-pin={moduleId}
-          aria-label={`${pinned ? 'Unpin' : 'Pin'} ${title}`}
-          aria-pressed={pinned}
-          onClick={onTogglePin}
-          onMouseEnter={() => setHovered(true)}
-          onMouseLeave={() => setHovered(false)}
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            width: 24,
-            height: 24,
-            border: 'none',
-            background: pinned ? ACCENT : 'transparent',
-            color: pinned ? FILL_A : '#8E8E96',
-            cursor: 'pointer',
-          }}
-        >
-          {pinIcon}
-        </button>
+        {pinnable && (
+          <button
+            type="button"
+            data-pin={moduleId}
+            aria-label={`${pinned ? 'Unpin' : 'Pin'} ${title}`}
+            aria-pressed={pinned}
+            onClick={onTogglePin}
+            onMouseEnter={() => setHovered(true)}
+            onMouseLeave={() => setHovered(false)}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              width: 24,
+              height: 24,
+              border: 'none',
+              background: pinned ? ACCENT : 'transparent',
+              color: pinned ? FILL_A : '#8E8E96',
+              cursor: 'pointer',
+            }}
+          >
+            {pinIcon}
+          </button>
+        )}
       </div>
       <div style={{ padding: '0 8px 8px' }}>{children}</div>
     </section>

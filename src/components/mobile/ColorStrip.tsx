@@ -72,6 +72,7 @@ const ColorStrip: React.FC<{ domain: StripDomain }> = ({ domain }) => {
     setActiveColor,
     linkingSource,
     linkTarget,
+    cancelLinking,
     hoveredSource,
     setHoveredSource,
     toggleColorLock,
@@ -99,6 +100,56 @@ const ColorStrip: React.FC<{ domain: StripDomain }> = ({ domain }) => {
     boxes[0]?.key
   const sel = boxes.find((b) => b.key === selected)
   const placing = linkingSource !== null
+
+  // While a placement is open, a tap anywhere that is not a destination cancels it — the mode has
+  // to be exitable by the same gesture that entered it, not only by Escape, which a phone does not
+  // have. The cancelling tap does nothing else: its click is swallowed, so tapping a theme box does
+  // not also select it and tapping a bar button does not also toggle a module.
+  //
+  // The flag is set on pointerdown and read on the click that follows, which means it has to survive
+  // the re-render that cancelling causes — so the listener lives for the component's whole life and
+  // refreshes the flag on every tap rather than being mounted only while placing. Refs carry the
+  // current values into it so it never needs re-subscribing.
+  const swallowClickRef = React.useRef(false)
+  const placingRef = React.useRef(placing)
+  const cancelLinkingRef = React.useRef(cancelLinking)
+
+  React.useEffect(() => {
+    placingRef.current = placing
+    cancelLinkingRef.current = cancelLinking
+  })
+
+  React.useEffect(() => {
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target as HTMLElement | null
+      const onDestination = target?.closest('[data-target="true"]') != null
+      if (placingRef.current && !onDestination) {
+        swallowClickRef.current = true
+        cancelLinkingRef.current()
+      } else {
+        swallowClickRef.current = false
+      }
+    }
+    // A keyboard activation fires a click with no pointerdown in front of it; never let a stale
+    // flag eat one.
+    const onKeyDown = () => {
+      swallowClickRef.current = false
+    }
+    const onClickCapture = (event: MouseEvent) => {
+      if (!swallowClickRef.current) return
+      swallowClickRef.current = false
+      event.stopPropagation()
+      event.preventDefault()
+    }
+    document.addEventListener('pointerdown', onPointerDown, true)
+    document.addEventListener('keydown', onKeyDown, true)
+    document.addEventListener('click', onClickCapture, true)
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown, true)
+      document.removeEventListener('keydown', onKeyDown, true)
+      document.removeEventListener('click', onClickCapture, true)
+    }
+  }, [])
 
   return (
     <div>
@@ -167,8 +218,8 @@ const ColorStrip: React.FC<{ domain: StripDomain }> = ({ domain }) => {
 
       {isUi && placing && (
         <p style={{ fontSize: 10, color: '#8E8E96', padding: '0 0 6px' }}>
-          Linking from <strong>{linkingSource}</strong> — tap a syntax or ANSI colour. Escape
-          cancels.
+          Linking from <strong>{linkingSource}</strong> — tap a syntax or ANSI colour, or anywhere
+          else to cancel.
         </p>
       )}
 
@@ -188,8 +239,8 @@ const ColorStrip: React.FC<{ domain: StripDomain }> = ({ domain }) => {
           const isSelected =
             activeColor !== null &&
             (box.targetId === activeColor || box.key === activeColor)
-          // The theme strip is the *source* side: while a placement is open its boxes are not
-          // link targets, so a tap still selects instead of trying to link theme → theme.
+          // The theme strip is the *source* side: while a placement is open its boxes are not link
+          // targets, so a tap on one cancels the placement instead of trying to link theme → theme.
           const isTargetHere = !isUi && placing
 
           return (
@@ -197,6 +248,7 @@ const ColorStrip: React.FC<{ domain: StripDomain }> = ({ domain }) => {
               key={box.key}
               type="button"
               data-box={box.key}
+              data-target={isTargetHere ? 'true' : undefined}
               data-selected={isSelected ? 'true' : undefined}
               data-locked={box.locked ? 'true' : undefined}
               data-linked={box.linked ? 'true' : undefined}

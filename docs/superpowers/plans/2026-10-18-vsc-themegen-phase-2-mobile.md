@@ -11,6 +11,7 @@ Colour pipeline context: `docs/superpowers/specs/2026-10-17-vsc-themegen-color-a
 - [x] M4 — picker module
 - [x] M5 — pared editor preview
 - [x] M6 — polish, persistence, mobile probe, verification
+- [x] M7 — review round: the four open items in spec §6, decided and asserted
 
 One commit per step, each ending with the app runnable and testable in the browser at
 `http://127.0.0.1:3100` (and over the tailnet at `https://vctg.lynsand.tricky.click/`).
@@ -150,6 +151,37 @@ console errors on mount at 390×844. Landed as `probe-mobile.ts` section 1d.
   flat language) closed in the doc; item 6 (picker box aspect at phone width) added.
 - Project memory refreshed at phase close.
 
+## M7 — review round: the open items, decided
+
+Review answers to spec §6, each landed in code with an assertion rather than as a doc note:
+
+1. **Pinned region height → the Editor Preview is not pinnable.** The answer was to remove the cause
+   rather than cap the symptom: the preview is a viewer, not a control surface. `Module` grew a
+   `pinnable` prop (no pin control is drawn) and `MobileShell` holds `NOT_PINNABLE = {preview}`, which
+   also filters the *restore* path — a preview pin written by an older session is ignored and then
+   cleared from `localStorage` by the write effect, so it cannot come back. The remaining pinnable
+   modules are short enough that no max-height was needed.
+2. **No-selection state → confirmed as built**, no change (the fallback header draws no outline).
+3. **Cancel by re-pressing the source → already true**, and now asserted: `startLinking` toggles and
+   the button relabels itself "Cancel linking from …" while placing. The probe had been clicking the
+   source by `aria-label^="Link "`, which is why the re-press case had never been exercised.
+4. **Saturation box → capped at 240px**, not square: `height: 240px` in place of `aspect-ratio: 1/1`,
+   so 374×240 at 390px. Non-square is the deliberate outcome.
+5. **New rule the review added:** while a placement is open, a tap on anything that is not a
+   destination cancels it — a phone has no `Escape`. `ColorStrip` marks destinations with
+   `data-target="true"` (32 syntax + 16 ansi; never the theme strip, which is the source side) and the
+   cancelling tap does nothing else — its click is swallowed at the document so a theme box is not
+   also selected and a bar button is not also toggled.
+
+Evidence: `pw/probe-mobile.ts` 111 → **129 checks, 0 failed**; `pw/check.ts` 52/0; `pw/probe-shadow.ts`
+10/0; build/tsc/lint clean; `parity.ts --diff` 680/0/0; `phase-b.ts` ALL PASSED.
+
+Two harness notes from this round: `check.ts`'s Base Hue section could lose its keyboard presses when
+they landed before the slider had focus, failing the guard and the three rotation checks under it — it
+now re-focuses and re-presses once. And the `ColorStrip` cancel listener is mounted for the component's
+whole life (flag set on `pointerdown`, read on the `click` after it) because cancelling re-renders in
+between, so a listener mounted only while placing would be torn down before the click it must swallow.
+
 ## Risks
 
 1. **Panel-level logic drift.** The mobile shell renders `ColorStrip` directly rather than branching the
@@ -159,5 +191,6 @@ console errors on mount at 390×844. Landed as `probe-mobile.ts` section 1d.
 2. **Radix tooltips on touch.** Tooltips carry real information today (what a button does). If they are
    unreachable by tap, use `title` attributes as the mobile fallback.
 3. **The pinned region is not `position: sticky`.** The pin model lifts one module above the scroller in
-   normal flow, so there is no sticky-vs-page-scroll fight to begin with; the remaining risk is a tall
-   pinned module (Editor Preview) filling the viewport — spec §6 open item 1.
+   normal flow, so there is no sticky-vs-page-scroll fight to begin with. The remaining risk was a tall
+   pinned module (Editor Preview) filling the viewport — removed in M7 by making the preview
+   unpinnable (spec §6 item 1).

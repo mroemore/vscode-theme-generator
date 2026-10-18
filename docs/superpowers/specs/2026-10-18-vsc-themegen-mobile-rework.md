@@ -77,6 +77,10 @@ The bar **toggles each module's visibility**. A disabled module is not rendered 
   while everything else scrolls under it.
 - The pinned module **casts its shadow down** onto the scroller instead of receiving one.
 - Pin state **persists across reloads** (localStorage); it is not cleared by a theme reset.
+- **Not every module is pinnable.** The Editor Preview is a viewer, not a control surface, so it holds
+  no pinned slot: it draws no pin control, and a pin stored by an older session is ignored on restore
+  (and cleared from storage rather than left to be re-read). Everything else pinnable is short enough
+  that the pinned region needs no max height.
 
 ### 3.4 Colour modules — horizontal scroller
 
@@ -99,6 +103,12 @@ Two as-built notes:
 - **The theme strip is also the link source.** Links run theme → syntax/ANSI, so the theme module's
   title bar carries the link control; a link placed there then shows up as a corner glyph on the
   target boxes in the syntax/ANSI strips.
+- **A placement is open, so a tap has to be able to close it.** While one is open the syntax and ANSI
+  boxes mark themselves as destinations, and a tap on **anything that is not a destination** cancels
+  the placement — a phone has no `Escape`. The cancelling tap does nothing else: its click is
+  swallowed, so tapping a theme box does not also select it and tapping a bar button does not also
+  toggle a module. Re-pressing the source button cancels too (it is a toggle, and it re-labels itself
+  "Cancel linking from …" while placing).
 
 ### 3.5 The picker module
 
@@ -123,11 +133,14 @@ Three calls made during review rather than asked, all cheap to flip:
   A round handle on a square surface is the one piece that would look wrong either way.
 
 As built (M4), and the one place the drawing was not the spec: the picker goes **full-bleed**, and
-react-colorful's saturation box is square, so at 390px wide it renders 374×374 — about 44% of an
-844px viewport, more than the mockup suggested. That is the honest reading of "full-bleed instead of
-the fixed 200px block" (the alternative, a capped non-square box, is a new call, not an inherited
-one), and the hex row above it now reads as the module's header. Flagged as open item 6 rather than
-quietly capped.
+react-colorful's saturation box was square, so at 390px wide it rendered 374×374 — about 44% of an
+844px viewport, more than the mockup suggested. That was the honest reading of "full-bleed instead of
+the fixed 200px block", and it was flagged as open item 6 rather than quietly capped.
+
+**Decided in review (open item 6): capped, not square.** `.flat-picker .react-colorful__saturation`
+now sets `height: 240px` instead of `aspect-ratio: 1 / 1`, so the box is 374×240 at 390px — the
+surface is deliberately non-square, and the picker stays thumb-sized instead of pushing the hue slider
+and hex row off the bottom of the screen.
 
 The flat look is **scoped to a `flat` prop** (`ActiveColorPicker flat`), passed only by
 `MobileShell`; the desktop picker keeps react-colorful's stock rounded look. So §6.3's "does desktop
@@ -183,7 +196,9 @@ These are the Phase 1 contracts, and a layout change has no business touching an
 3. **Pipeline neutrality** — `.tmp_files/parity.ts --diff <baseline>` and `.tmp_files/phase-b.ts`
    must be unchanged by this work. If a palette value moves, a layout change has reached into the
    wrong place.
-4. **Escape cancels a pending link placement** (existing behaviour, easy to lose in a rewrite).
+4. **A pending link placement can always be cancelled** — `Escape` (existing behaviour, easy to lose
+   in a rewrite), a tap anywhere that is not a destination, or re-pressing the source button. A
+   placement must never be a mode a phone cannot leave.
 
 ## 5. Where view state lives
 
@@ -194,22 +209,27 @@ mobile layout adds.
 
 ## 6. Open items
 
-1. Pinned region height: pinning a tall module (Editor Preview) fills the screen above the scroller.
-   Acceptable, or does the pinned region want a max height with its own scroll?
+Decided in review (this round) — each landed in code and in the mobile probe:
+
+1. ~~Pinned region height.~~ Pinning a tall module (Editor Preview) filled the screen above the
+   scroller. Decided: **the Editor Preview is not pinnable at all** (§3.3). It is a viewer, so it
+   holds no pinned slot; the modules that remain pinnable are short enough that no max height is
+   needed.
+4. ~~Does the strip mark a selection when the page has none?~~ Confirmed as built: the fallback shows
+   in the header without an outline. "Nothing selected" staying visually distinct from "selected the
+   first key" reads right. No change.
+5. ~~Cancel a link by re-pressing its source button?~~ Already true, and now asserted: `startLinking`
+   toggles, and the button re-labels itself "Cancel linking from …" while placing. The tap-to-cancel
+   rule in §3.4 makes `Escape` no longer the only way out.
+6. ~~Keep the saturation box square?~~ Capped: `height: 240px`, a non-square 374×240 surface (§3.5).
+
+Still open:
+
 2. ~~The three picker calls in §3.5 (a/b/c).~~ Decided in review: the hex row sits above the picker,
    the stock black bar goes, and the handle is a 12px square outline. M4 implements them.
 3. Whether the desktop layout adopts the flat module language later (§0 assumption). The picker is now
    already there — the flat look lives behind `ActiveColorPicker`'s `flat` prop, which only
    `MobileShell` passes, so desktop adoption is dropping the prop rather than a rewrite.
-4. Does the strip mark a selection when the page has none? Today the fallback selection shows in the
-   static header but draws no outline (see §3.4), which keeps "no selection" visually distinct from
-   "selected the first key" — confirm that reads right on a phone.
-5. Should the theme module let a link be *cancelled* by re-pressing its source button? §4.4 covers
-   `Escape` for a pending placement, and unlinking is done from the target's header, so the source
-   button currently has no toggle-off.
-6. The picker's saturation box is full-bleed and therefore square (374×374 at 390px — 44% of a phone
-   viewport, see §3.5 as built). Keep it square, or cap the height at ~240px and accept a
-   non-square surface?
 
 ## 7. Verification
 
@@ -228,6 +248,18 @@ mobile layout adds.
   that swaps the Monaco model). M6 adds the corner-glyph capture (§6 item 4): a locked and a linked
   colour are put in the strip, a third is selected, and the glyph elements are asserted by attribute
   and measured size rather than by the lock flag alone.
+
+A review round after M6 closed §6's four decided items, and the probe carries their assertions
+(129 checks, 0 failed): the preview draws no pin control and a preview pin stored by an older session
+is ignored on restore *and* cleared from storage; the saturation box measures 374×240 rather than
+square; while placing, the syntax and ANSI boxes mark themselves `data-target` and a tap on a
+non-destination — or on nothing at all — cancels the placement without selecting that colour or making
+any link; and the source button relabels itself "Cancel linking from …" and cancels when re-pressed.
+
+One harness flake fixed in the same round: `check.ts`'s Base Hue section could lose its keyboard
+presses when they landed before the slider had taken focus, and the "did the slider actually move"
+guard then failed the three rotation checks beneath it. It now re-focuses and re-presses once before
+reporting.
 
 ## 8. As built (M1–M6)
 
@@ -315,3 +347,40 @@ section now drives both saturation sliders to 100 first and asserts the count it
 A second one, from M4: **Monaco renders whitespace as `U+00A0`**, not a regular space, so any probe
 marker with a space in it never byte-matches the editor's text. Normalize both sides
 (`.replace(/\u00a0/g, ' ')`) at the comparison boundary.
+
+**Review round after M6 — the four open items, closed in code.** Each decision was cheap to make and
+each landed with an assertion, so none of them can regress silently:
+
+| Item | Decision | Where it landed |
+| --- | --- | --- |
+| 1 pinned region height | the Editor Preview is **not pinnable** | `Module`'s `pinnable` prop; `NOT_PINNABLE` in `MobileShell` (a stored preview pin is ignored *and* cleared) |
+| 4 no-selection state | confirmed as built, no change | the fallback header keeps drawing no outline |
+| 5 cancel by re-pressing the source | already true; now asserted | `startLinking` toggles; the button relabels to "Cancel linking from …" |
+| 6 saturation box square? | **capped at 240px** | `globals.css` `.flat-picker .react-colorful__saturation` |
+
+Plus one rule the review added rather than settled: **while a placement is open, a tap on anything
+that is not a destination cancels it** — a phone has no `Escape`, so the gesture that opens the mode
+has to close it. The cancelling tap does nothing else: its click is swallowed at the document, so a
+theme box is not also selected and a bar button is not also toggled. `ColorStrip` marks destinations
+with `data-target="true"` (32 syntax + 16 ansi, never the theme strip, which is the source side).
+
+The swallow has one implementation subtlety worth keeping: the flag is set on `pointerdown` and read
+on the `click` that follows, and cancelling re-renders in between — so the listener lives for the
+component's whole life and refreshes the flag on every tap, with refs carrying the current
+`placing` / `cancelLinking` into it, rather than being mounted only while placing.
+
+**Review-round evidence** (390×844 against the live dev server):
+
+| Check | Result |
+| --- | --- |
+| `.tmp_files/pw/probe-mobile.ts` | 129 passed / 0 failed (was 111) |
+| `.tmp_files/pw/check.ts` (desktop, 52) | 52 passed / 0 failed |
+| `.tmp_files/pw/probe-shadow.ts` | 10 passed / 0 failed |
+| `bun run build` / `tsc --noEmit` / `lint` | clean, no warnings |
+| `.tmp_files/parity.ts --diff <baseline>` | 680 combos, 0 changed, 0 draw mismatches |
+| `.tmp_files/phase-b.ts` | ALL PASSED |
+
+Measured, not asserted: saturation box `374×240` (non-square by decision), the preview module at
+`[data-pin]` count 4 rather than 5, and the ignored preview pin gone from
+`localStorage['vsc_themegen.mobile.pin']` after the restore.
+

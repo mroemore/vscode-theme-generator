@@ -79,7 +79,9 @@
 }
 .flat-picker .react-colorful__saturation {
   flex: none;
-  aspect-ratio: 1 / 1;
+  /* Capped rather than square: full-bleed at 390px made a 374px square — 44% of the viewport,
+   * taller than the controls module above it. 240px keeps the picker thumb-sized (§6.1). */
+  height: 240px;
   /* the stock 12px solid black bar between saturation and hue — the most visible "gap" */
   border-bottom: none;
   border-radius: 0;
