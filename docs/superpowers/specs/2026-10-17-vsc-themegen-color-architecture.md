@@ -317,7 +317,7 @@ Names kept; offsets become independent of `baseHue`. Constants are indicative �
 
 | scheme | today | repaired |
 |---|---|---|
-| `NestedPolygons` | `sides = floor(baseHue/30)+3`, ramp `sides·i` | nested regular polygons: `offsetᵢ = i · 360/nᵢ` for `nᵢ ∈ {3,4,5,6,8}` layers |
+| `NestedPolygons` | `sides = floor(baseHue/30)+3`, ramp `sides·i` | nested regular polygons: each layer rotated one further vertex step from the layer outside it, i.e. cumulative `Σ 360/nⱼ` |
 | `RosettePattern` | `k` from `baseHue`, `cos(kθ) % 360` | `k`-fold petal: `offsetᵢ = i · 360/k` |
 | `Torus` | `cos/sin` of `baseHue`, negatives | `offsetᵢ = (i · 360/m + φ·i) mod 360`, `m` major segments, winding twist `φ` |
 | `DoubleTorus` | two shifted tori, negatives | both windings: `offsetᵢ = (i · 360/m + φᵢ·j) mod 360`, `j ∈ {1,2}` |
@@ -339,6 +339,15 @@ The bases and the ceiling are now exported from `src/lib/colors/syntax.ts` (`SYN
 ### 3.5 Known, deliberately not fixed
 
 `buildPools` reads `Color(colors.AC1).hue()` / `Color(colors.AC2).hue()` back out of the **rendered hex** to build the `ac1`/`ac2` harmonic pools. A one-step change in an accent's lightness therefore perturbs the hue read from it, and every token drawing from those pools moves with it — which is why the §3.4 accent fix shifts ~50-86 combos per syntax key by a single channel step, in light mode and `full` pool mode only. No visual consequence. Handing the internal hue back from the resolve instead of re-reading the hex would change how *every* `full` palette is derived, so it is recorded as a follow-up, not folded into a phase whose charter was scheme repair.
+
+### 3.6 Covariant is not the same as spread — the `NestedPolygons` reading, corrected
+
+`.tmp_files/phase-b.ts` proves the contract: every offset is independent of `baseHue`. That is a statement about *stability*, not about *spread*, and the first `NestedPolygons` repair satisfied the letter of it while collapsing in practice. `offsetᵢ = (i+1) · 360/nᵢ` puts each layer one vertex further out on its own polygon; with the drawn sides reaching 12, consecutive layers land 30° or 45° apart, and the pool folds into a narrow wedge — measured at **494 of 1000 shape draws** against a "≥ 4 hues and ≥ 180° arc" yardstick (worst case: 3 distinct hues inside 60°).
+
+Nesting reads as *each layer rotated from the one outside it*, so the offsets accumulate: `Σⱼ 360/nⱼ` — 0 of 1000 draws fail the same yardstick, at 6 distinct hues and a 240-270° arc. Two durable consequences:
+
+- **A spread guard now exists.** `phase-b.ts` §8 walks 1000 shape draws for all four repaired schemes and fails on any pool with fewer than 4 distinct hues or an arc under 180° (`Torus` 247-306°, `DoubleTorus` 200-288°, `RosettePattern` 262-320°, `NestedPolygons` 240-270°). Covariance alone would not have caught this, so the two checks have to exist side by side.
+- **A narrow pool is not automatically a defect.** `Labirinth` spreads over 60° and `GoldenRatio` over 117° *by design* — a labyrinth is a tight spiral, and an irrational-ratio scheme deliberately covers a modest arc. The guard is therefore scoped to the four schemes whose reading was justified by spreading, not applied to all 34.
 
 ---
 
@@ -497,7 +506,7 @@ All seven are settled. Recorded with the outcome as built, so the doc and the co
 4. **The `few` bug** (§2.2). **Done — wired honestly in B.** `poolMode` moved onto the `Assignment`, so both buttons differ and the initial load is a Full draw. The lying tooltip is now true.
 5. **The three alpha keys as link sources** (§5.2). **All 16 allowed, alpha stripped at resolution** — implemented in Phase E.
 6. **ANSI stability in Phase B** (§2.5). **Done — yes.** ANSI resolves from the assignment's own seed and re-rolls only on `Regenerate ANSI`.
-7. **Repaired scheme constants** (§3.3). **Built; awaiting one on-screen review.** Shape constants now come from `ShapeParams` on the assignment (five consecutive side counts from a choice ring for `NestedPolygons`, a fold order for `RosettePattern`, a major-segment count and two windings for the torus pair). Measured: `Torus` 2→7 distinct hues and 89°→289° arc spread, `DoubleTorus` 3→7 / 90°→256°, `RosettePattern` 2→7 / 90°→309°, `NestedPolygons` 113°→240°.
+7. **Repaired scheme constants** (§3.3, §3.6). **Built; awaiting one on-screen review.** Shape constants now come from `ShapeParams` on the assignment (five consecutive side counts from a choice ring for `NestedPolygons`, a fold order for `RosettePattern`, a major-segment count and two windings for the torus pair). Measured: `Torus` 2→7 distinct hues and 89°→289° arc spread, `DoubleTorus` 3→7 / 90°→256°, `RosettePattern` 2→7 / 90°→309°, `NestedPolygons` 113°→240°. The `NestedPolygons` reading was **corrected after review** — the first repair was covariant but collapsed for half of all shape draws (§3.6); it now accumulates, and a spread guard holds all four.
 8. **`ensureReadability`'s polarity/termination bug** (§0.1, §5.7). **Done — fixed across B and E.** B flipped the direction to be taken from the *background* (`goDarker = bgColor.isLight()`) and added a pole fallback, taking floored UI keys below their floor from 666/6720 to 0. E then fixed the second, subtler half: the floor was judged on the internal float and `hex()` rounding could push the returned value back under it (5.4999 → 5.4857). Floors and bands are now read from the spec tables by both the generator and the link layer.
 9. **The two spec-range defects Phase B flagged** (§3.4). **Done — fixed with C.** Dark-mode syntax tokens used to clamp at pure white (`punctuationQuote`/`punctuationComma` 20% of dark palettes; `punctuationBrace` over 99); the rows are pulled back under an exported ceiling of 98 that §3.4 derives from measurement. Light-mode `AC1`/`AC2` could land as dark as the body text (worst case black); their band now starts above the foreground.
 10. **The accent pools are derived from a rounded hex** (§3.5). **Deliberately open.** `buildPools` re-reads `AC1`/`AC2`'s hue from the rendered hex, so 1-bit lightness noise in an accent propagates a 1-step hue change into the `ac1`/`ac2` pools. Measured, characterised, and left for a follow-up because the clean fix re-derives every `full` palette.

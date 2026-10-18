@@ -176,9 +176,15 @@ const SCHEME_OFFSETS: Record<ColorScheme, (shape: ShapeParams) => number[]> = {
   // base is possible for small k; that is the same as every other cyclical scheme.
   [ColorScheme.RosettePattern]: ({ rosetteFold }) =>
     repeat(8, (i) => (i * 360) / rosetteFold),
-  // Layer i is a regular nᵢ-gon, so its offset is one of its own vertices.
-  [ColorScheme.NestedPolygons]: ({ nestedSides }) =>
-    nestedSides.map((n, i) => (i + 1) * (360 / n)),
+  // Layer i is a regular nᵢ-gon, drawn rotated one further vertex step from the layer
+  // outside it — that is what nesting looks like. Taking vertex (i+1) of every polygon
+  // instead clumps them: the drawn sides range to 12, so consecutive layers land 30° or
+  // 45° apart and the pool collapses into a narrow arc (measured: at most 3 distinct hues
+  // and a 60° arc for 71 of 400 shape draws; the walk below is 0 of 400, at 240-270°).
+  [ColorScheme.NestedPolygons]: ({ nestedSides }) => {
+    let angle = 0
+    return nestedSides.map((n) => (angle += 360 / n))
+  },
 }
 
 const DEFAULT_SHAPE: ShapeParams = {

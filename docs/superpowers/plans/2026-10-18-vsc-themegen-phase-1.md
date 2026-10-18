@@ -385,6 +385,15 @@ Manual: link `FG3 → type`, drag Base Hue, confirm both move and the relationsh
   visual consequence, and the fix (have the resolve hand back the internal hue rather than
   re-reading the hex) changes how every `full` palette is derived, so it is left as a
   follow-up rather than folded in here.
+- **Post-C — one more scheme defect, found by *looking* rather than by testing.**
+  `NestedPolygons`' first repair was formally covariant and degenerate in practice: taking
+  vertex `(i+1)` of each nested polygon clumps the layers into a 60° wedge for **494 of
+  1000 shape draws** (worst case 3 distinct hues). It came out of rendering the four
+  repaired schemes into a page to review their shape constants — the contract test cannot
+  see spread, so nothing else would have caught it. The reading now accumulates
+  (`Σⱼ 360/nⱼ`: 0 of 1000 draws narrow, 6 hues, 240-270° arc), and `phase-b.ts` §8 grew a
+  spread guard across the four repaired schemes. The diff for the correction moves exactly
+  the 20 `NestedPolygons` combos and nothing else.
 - **Not committed:** the parity harness and any probe (`.tmp_files/`, gitignored, tsconfig-excluded). Referenced in each phase's commit message.
 - **Untouched by design:** `export.ts` / `exportTheme.ts` (Q4a), `presets`, `SavedThemeSchema`, `ThemePreview`/Monaco/TextMate, mobile layout, ANSI lock controls.
 - **Phase B changes generated palettes** (stable assignment replaces per-call draws) — that is the point of the phase, and it is not a parity failure. Phase A is the only phase that must be byte-identical.
