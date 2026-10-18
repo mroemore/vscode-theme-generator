@@ -11,6 +11,7 @@ import SyntaxColorList from '@/components/SyntaxColorList'
 import ColorList from '@/components/ColorList'
 import AnsiColorList from '@/components/AnsiColorList'
 import { ThemeProvider } from '@/contexts/ThemeContext'
+import { TooltipProvider } from '@/components/ui/tooltip'
 
 class ErrorBoundary extends React.Component<
   { children: React.ReactNode },
@@ -76,7 +77,11 @@ export default function Page() {
   return (
     <ErrorBoundary>
       <ThemeProvider>
-        <ThemeGenerator />
+        {/* One provider for the whole tree: the link tooltips live inside the colour
+            panels, which are siblings, so neither can own the provider itself. */}
+        <TooltipProvider delayDuration={300}>
+          <ThemeGenerator />
+        </TooltipProvider>
       </ThemeProvider>
     </ErrorBoundary>
   )

@@ -13,6 +13,11 @@ import type { UIKey } from '@/lib/colors/ui'
 // Re-exported for the existing importers (`@/lib/types/colors`).
 export { ColorScheme }
 
+// Link types, re-exported so a component can take the whole colour vocabulary from one
+// import path (`links.ts` holds the behaviour).
+export type { Link, LinkTargetId, Links } from '@/lib/colors/links'
+export { ansiTargetId, dropLink, isAnsiTarget, targetKey, targetsOf } from '@/lib/colors/links'
+
 // ── Domain types ──────────────────────────────────────────────────────────────
 // Derived from the spec key tuples, so adding a colour to `src/lib/colors/<domain>.ts`
 // is the only edit needed: type, initial value, generator, saturation and schema all

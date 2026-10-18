@@ -91,22 +91,29 @@ export function ensureReadability(
   // keys ended below their floor.
   const goDarker = bgColor.isLight()
 
-  while (color.contrast(bgColor) < minContrast && iterations < maxIterations) {
+  // Judge the colour that is actually *returned*, not the internal float: `hex()`
+  // rounds each channel to 8 bits, which can push a colour that just met the floor back
+  // under it (measured: internal 5.5001 → returned 5.4857, 79 of 18355 link
+  // assertions). Comparing the rounded value makes the floor a guarantee rather than a
+  // near-miss, at the cost of occasionally overshooting by one 5% step.
+  const meetsFloor = (c: Color) => Color(c.hex()).contrast(bgColor) >= minContrast
+
+  while (!meetsFloor(color) && iterations < maxIterations) {
     color = goDarker
       ? color.darken(0.05).saturate(0.05)
       : color.lighten(0.05).saturate(0.05)
     iterations++
   }
 
-  // Relative darken/lighten converge slowly for some inputs and cannot reach the floor
-  // at all against a mid-tone background. Fall back to whichever pole actually maximises
-  // contrast, so the floor is met wherever the background physically allows it.
-  if (color.contrast(bgColor) < minContrast) {
+  // Relative darken/lighten converge slowly for some inputs and can stall short of the
+  // floor. Fall back to whichever pole actually maximises contrast, so the floor is met
+  // wherever the background physically allows it.
+  if (!meetsFloor(color)) {
     const black = Color('#000000')
     const white = Color('#FFFFFF')
     const best =
       black.contrast(bgColor) >= white.contrast(bgColor) ? black : white
-    if (best.contrast(bgColor) > color.contrast(bgColor)) color = best
+    if (best.contrast(bgColor) > Color(color.hex()).contrast(bgColor)) color = best
   }
 
   return color.hex()

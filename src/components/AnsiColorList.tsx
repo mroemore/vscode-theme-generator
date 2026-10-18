@@ -1,22 +1,26 @@
 import React from 'react'
 import { useTheme } from '../contexts/ThemeContext'
-import Color from 'color'
-import { Copy } from 'lucide-react'
 import { Button } from './ui/button'
+import {
+  TargetLinkControls,
+  highlightStyle,
+} from './ColorLinkControls'
+import { ansiTargetId } from '@/lib/colors/links'
+
+// The ANSI panel. Target side of linking: no lock UI (theme colours have locks, the
+// terminal palette does not), but every row is linkable and behaves exactly like a
+// syntax row while a placement is open.
 
 const AnsiColorList: React.FC = () => {
-  const { ansiColors, setActiveColor, colors } = useTheme()
-
-  const copyToClipboard = (color: string) => {
-    navigator.clipboard.writeText(color).then(
-      () => {
-        console.log('Color copied to clipboard')
-      },
-      (err) => {
-        console.error('Could not copy text: ', err)
-      }
-    )
-  }
+  const {
+    ansiColors,
+    setActiveColor,
+    colors,
+    links,
+    linkingSource,
+    linkTarget,
+    hoveredSource,
+  } = useTheme()
 
   const colorPairs = [
     ['Black', 'BrightBlack'],
@@ -35,35 +39,31 @@ const AnsiColorList: React.FC = () => {
   }: {
     colorKey: string
     colorValue: string
-  }) => (
-    <div
-      className="w-full h-7 flex items-center justify-between px-2 cursor-pointer"
-      style={{
-        // backgroundColor: colorValue,
-        borderBottom: '1px solid',
-        borderBottomColor: colorValue,
-      }}
-      onClick={() => setActiveColor(`ansi${colorKey}`)}
-    >
-      <span
-        className="text-xs font-semibold truncate"
-        style={{ color: colorValue }}
-      >
-        {colorKey}
-      </span>
-      <Button
-        variant="ghost"
-        size="icon"
-        className="h-5 w-5"
-        onClick={(e: React.MouseEvent) => {
-          e.stopPropagation()
-          copyToClipboard(colorValue)
+  }) => {
+    const targetId = ansiTargetId(colorKey)
+    const link = links[targetId]
+    const placing = linkingSource !== null
+    const crossHighlighted =
+      hoveredSource !== null && link?.source === hoveredSource
+
+    return (
+      <div
+        className="w-full h-7 flex items-center justify-between px-2 cursor-pointer"
+        style={{
+          borderBottom: '1px solid',
+          borderBottomColor: colorValue,
+          ...highlightStyle(placing || crossHighlighted, colorValue),
         }}
+        onClick={() => (placing ? linkTarget(targetId) : setActiveColor(targetId))}
+        title={placing ? `Link to ${linkingSource}` : undefined}
       >
-        <Copy size={16} color={colorValue} />
-      </Button>
-    </div>
-  )
+        <span className="text-xs font-semibold truncate" style={{ color: colorValue }}>
+          {colorKey}
+        </span>
+        <TargetLinkControls targetId={targetId} value={colorValue} />
+      </div>
+    )
+  }
 
   return (
     <div

@@ -19,6 +19,14 @@ import { resolveAnsiColors } from '@/lib/utils/ansiColors'
 import { ColorScheme } from '@/lib/types/colors'
 import { drawTheme, redrawAnsi } from '@/lib/colors/assignment'
 import type { Assignment, PoolMode } from '@/lib/colors/assignment'
+import type { UIKey } from '@/lib/colors/ui'
+import {
+  applyLinks,
+  dropLink,
+  isAnsiTarget,
+  targetKey,
+} from '@/lib/colors/links'
+import type { LinkTargetId, Links } from '@/lib/colors/links'
 import { clamp, randomSeed } from '@/lib/utils/math'
 import { useTheme as useNextTheme } from 'next-themes'
 
@@ -35,6 +43,12 @@ import type { UIColors, SyntaxColors, AnsiColors } from '@/lib/types/colors'
 // how `generateColors` came to discard locked syntax colours on a BG1 edit. One ref
 // plus one version counter makes that class of bug unrepresentable: there is one
 // theme, always current, and no dependency arrays to get wrong.
+//
+// ── Base vs displayed ─────────────────────────────────────────────────────────
+// `baseSyntaxColors` / `baseAnsiColors` are what the generator produced;
+// `syntaxColors` / `ansiColors` are what the user sees. They differ exactly when a link
+// overrides a target, and `commit` is the single place the second is derived from the
+// first (see `links.ts` for why both are kept).
 
 interface ThemeState {
   isDark: boolean
@@ -44,8 +58,13 @@ interface ThemeState {
   scheme: ColorScheme
   assignment: Assignment
   colors: UIColors
+  /** Generator output, before links. The lock is applied here. */
+  baseSyntaxColors: SyntaxColors
+  baseAnsiColors: AnsiColors
+  /** What is displayed: the base, with every link applied. */
   syntaxColors: SyntaxColors
   ansiColors: AnsiColors
+  links: Links
   lockedColors: Set<string>
 }
 
@@ -60,8 +79,14 @@ interface ThemeContextType {
   colors: UIColors
   syntaxColors: SyntaxColors
   ansiColors: AnsiColors
+  links: Links
+  linkedSources: Set<UIKey>
   lockedColors: Set<string>
   activeColor: string | null
+  /** The theme colour currently awaiting a target, or null when not placing a link. */
+  linkingSource: UIKey | null
+  /** The source whose targets are being cross-highlighted, driven by hover. */
+  hoveredSource: UIKey | null
   setIsDark: (value: boolean) => void
   setBaseHue: (value: number) => void
   setUiSaturation: (value: number) => void
@@ -71,8 +96,15 @@ interface ThemeContextType {
   regenerateUnlocked: () => void
   regenerateAnsiColors: () => void
   toggleColorLock: (colorKey: string) => void
+  setColorLocks: (colorKeys: readonly string[], locked: boolean) => void
   setActiveColor: (colorKey: string | null) => void
   handleColorChange: (colorKey: string, newColor: string) => void
+  startLinking: (source: UIKey) => void
+  cancelLinking: () => void
+  linkTarget: (target: LinkTargetId) => void
+  unlinkTarget: (target: LinkTargetId) => void
+  setLinkAdjust: (target: LinkTargetId, adjust: boolean) => void
+  setHoveredSource: (source: UIKey | null) => void
 }
 
 const SCHEMES = Object.values(ColorScheme).filter(
@@ -93,14 +125,27 @@ function pickLocked(
 }
 
 /**
- * Resolve every colour domain from one state snapshot. Pure and deterministic: given
- * the same state it returns the same palette, and it consumes no randomness.
+ * Re-derive the displayed palettes from the stored bases plus the links. The single
+ * point every state transition passes through, which is what makes "links follow their
+ * source" true for *every* edit affordance rather than only for regeneration.
  */
-function resolveAll(s: ThemeState): {
-  colors: UIColors
-  syntaxColors: SyntaxColors
-  ansiColors: AnsiColors
-} {
+function relink(s: ThemeState): ThemeState {
+  const { syntaxColors, ansiColors } = applyLinks({
+    colors: s.colors,
+    baseSyntaxColors: s.baseSyntaxColors,
+    baseAnsiColors: s.baseAnsiColors,
+    links: s.links,
+    isDark: s.isDark,
+  })
+  return { ...s, syntaxColors, ansiColors }
+}
+
+/**
+ * Re-resolve every *base* colour from one state snapshot. Pure and deterministic: given
+ * the same state it returns the same palette, and it consumes no randomness. Links are
+ * applied by the caller (`commit`), so there is exactly one place they are resolved.
+ */
+function resolveAll(s: ThemeState): ThemeState {
   const input = {
     assignment: s.assignment,
     scheme: s.scheme,
@@ -114,18 +159,18 @@ function resolveAll(s: ThemeState): {
     pickLocked(s.colors, s.lockedColors) as Partial<UIColors>
   )
   const pools = buildPools(input, colors)
-  const syntaxColors = resolveSyntaxColors(
+  const baseSyntaxColors = resolveSyntaxColors(
     {
       assignment: s.assignment,
       pools,
       syntaxSaturation: s.syntaxSaturation,
       backgroundColor: colors.BG1,
     },
-    pickLocked(s.syntaxColors, s.lockedColors) as Partial<SyntaxColors>
+    pickLocked(s.baseSyntaxColors, s.lockedColors) as Partial<SyntaxColors>
   )
-  const ansiColors = resolveAnsiColors(s.assignment, colors.BG1)
+  const baseAnsiColors = resolveAnsiColors(s.assignment, colors.BG1)
 
-  return { colors, syntaxColors, ansiColors }
+  return { ...s, colors, baseSyntaxColors, baseAnsiColors }
 }
 
 /** One full theme drawn from a fresh seed — the initial snapshot, with no flash of defaults. */
@@ -139,11 +184,14 @@ function bootstrap(isDark: boolean): ThemeState {
     scheme: theme.scheme,
     assignment: theme.assignment,
     colors: {} as UIColors,
+    baseSyntaxColors: {} as SyntaxColors,
+    baseAnsiColors: {} as AnsiColors,
     syntaxColors: {} as SyntaxColors,
     ansiColors: {} as AnsiColors,
+    links: {},
     lockedColors: new Set(),
   }
-  return { ...base, ...resolveAll(base) }
+  return relink(resolveAll(base))
 }
 
 const ThemeContext = createContext<ThemeContextType | undefined>(undefined)
@@ -155,6 +203,8 @@ export const ThemeProvider: React.FC<{
   const { setTheme, resolvedTheme } = useNextTheme()
 
   const [activeColor, setActiveColor] = useState<string | null>(null)
+  const [linkingSource, setLinkingSource] = useState<UIKey | null>(null)
+  const [hoveredSource, setHoveredSource] = useState<UIKey | null>(null)
   const [, setVersion] = useState(0)
 
   const stateRef = useRef<ThemeState | null>(null)
@@ -164,17 +214,14 @@ export const ThemeProvider: React.FC<{
   }
 
   const commit = useCallback((mutate: (s: ThemeState) => ThemeState) => {
-    stateRef.current = mutate(stateRef.current as ThemeState)
+    stateRef.current = relink(mutate(stateRef.current as ThemeState))
     setVersion((v) => v + 1)
   }, [])
 
-  /** Re-resolve every domain from a mutated snapshot and adopt the result. */
+  /** Re-resolve every base from a mutated snapshot and adopt the result. */
   const commitResolved = useCallback(
     (mutate: (s: ThemeState) => ThemeState) =>
-      commit((s) => {
-        const next = mutate(s)
-        return { ...next, ...resolveAll(next) }
-      }),
+      commit((s) => resolveAll(mutate(s))),
     [commit]
   )
 
@@ -188,6 +235,16 @@ export const ThemeProvider: React.FC<{
       commitResolved((s) => ({ ...s, isDark: dark }))
     }
   }, [resolvedTheme, commitResolved])
+
+  // Escape cancels link placement, so the mode is always escapable without moving focus.
+  useEffect(() => {
+    if (linkingSource === null) return
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setLinkingSource(null)
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [linkingSource])
 
   const setIsDark = (value: boolean) => {
     setTheme(value ? 'dark' : 'light')
@@ -203,7 +260,8 @@ export const ThemeProvider: React.FC<{
     commitResolved((s) => ({ ...s, scheme: value }))
 
   // The saturation sliders scale the colours that are on screen rather than re-resolving,
-  // which is what preserves hand-edited hues and the per-key lightness spread.
+  // which is what preserves hand-edited hues and the per-key lightness spread. They act
+  // on the *bases*; a linked target's display is re-derived from its source by `commit`.
   const setUiSaturation = (value: number) =>
     commit((s) => ({
       ...s,
@@ -215,8 +273,8 @@ export const ThemeProvider: React.FC<{
     commit((s) => ({
       ...s,
       syntaxSaturation: value,
-      syntaxColors: updateSyntaxColorsWithSaturation(
-        s.syntaxColors,
+      baseSyntaxColors: updateSyntaxColorsWithSaturation(
+        s.baseSyntaxColors,
         value,
         s.colors.BG1,
         s.lockedColors
@@ -251,14 +309,10 @@ export const ThemeProvider: React.FC<{
     })
 
   const regenerateAnsiColors = () =>
-    commit((s) => {
-      const assignment = redrawAnsi(s.assignment, randomSeed())
-      return {
-        ...s,
-        assignment,
-        ansiColors: resolveAnsiColors(assignment, s.colors.BG1),
-      }
-    })
+    commit((s) => ({
+      ...s,
+      assignment: redrawAnsi(s.assignment, randomSeed()),
+    }))
 
   const toggleColorLock = (colorKey: string) =>
     commit((s) => {
@@ -268,21 +322,69 @@ export const ThemeProvider: React.FC<{
       return { ...s, lockedColors }
     })
 
+  const setColorLocks = (colorKeys: readonly string[], locked: boolean) =>
+    commit((s) => {
+      const lockedColors = new Set(s.lockedColors)
+      for (const key of colorKeys) {
+        if (locked) lockedColors.add(key)
+        else lockedColors.delete(key)
+      }
+      return { ...s, lockedColors }
+    })
+
+  const startLinking = (source: UIKey) =>
+    setLinkingSource((current) => (current === source ? null : source))
+
+  const cancelLinking = () => setLinkingSource(null)
+
+  const linkTarget = (target: LinkTargetId) => {
+    const source = linkingSource
+    if (source === null) return
+    commit((s) => ({
+      ...s,
+      links: {
+        ...s.links,
+        // Keeping any existing `adjust` choice means re-pointing a target at a new
+        // source does not silently reset the readability toggle.
+        [target]: { source, adjust: s.links[target]?.adjust ?? true },
+      },
+    }))
+    setLinkingSource(null)
+  }
+
+  const unlinkTarget = (target: LinkTargetId) =>
+    commit((s) => ({ ...s, links: dropLink(s.links, target) }))
+
+  const setLinkAdjust = (target: LinkTargetId, adjust: boolean) =>
+    commit((s) => {
+      const link = s.links[target]
+      if (!link) return s
+      return { ...s, links: { ...s.links, [target]: { ...link, adjust } } }
+    })
+
   const handleColorChange = (colorKey: string, newColor: string) =>
     commit((s) => {
-      if (colorKey.startsWith('ansi')) {
+      // Editing a linked target unlinks it first, then applies the edit. Every edit
+      // affordance (picker, hex field, hex entry) funnels through here.
+      const links = dropLink(s.links, colorKey)
+
+      if (isAnsiTarget(colorKey)) {
+        const key = targetKey(colorKey) as keyof AnsiColors
         return {
           ...s,
-          ansiColors: { ...s.ansiColors, [colorKey.slice(4)]: newColor },
+          links,
+          baseAnsiColors: { ...s.baseAnsiColors, [key]: newColor },
+          ansiColors: { ...s.ansiColors, [key]: newColor },
         }
       }
 
       if (colorKey in s.colors) {
         const colors = { ...s.colors, [colorKey]: newColor }
-        if (colorKey !== 'BG1') return { ...s, colors }
+        if (colorKey !== 'BG1') return { ...s, links, colors }
 
-        // A background edit re-resolves the syntax and terminal palettes against the
-        // new background. Locked syntax tokens are carried through, and ANSI re-reads
+        // A background edit re-resolves the syntax and terminal *bases* against the new
+        // background. Locked syntax tokens are carried through from the bases (not from
+        // the displayed colours, which a link may have overridden), and ANSI re-reads
         // its stored rolls rather than rolling a new palette.
         const input = {
           assignment: s.assignment,
@@ -294,30 +396,39 @@ export const ThemeProvider: React.FC<{
         const pools = buildPools(input, colors)
         return {
           ...s,
+          links,
           colors,
-          syntaxColors: resolveSyntaxColors(
+          baseSyntaxColors: resolveSyntaxColors(
             {
               assignment: s.assignment,
               pools,
               syntaxSaturation: s.syntaxSaturation,
               backgroundColor: newColor,
             },
-            pickLocked(s.syntaxColors, s.lockedColors) as Partial<SyntaxColors>
+            pickLocked(s.baseSyntaxColors, s.lockedColors) as Partial<SyntaxColors>
           ),
-          ansiColors: resolveAnsiColors(s.assignment, newColor),
+          baseAnsiColors: resolveAnsiColors(s.assignment, newColor),
         }
       }
 
-      if (colorKey in s.syntaxColors) {
-        return { ...s, syntaxColors: { ...s.syntaxColors, [colorKey]: newColor } }
+      if (colorKey in s.baseSyntaxColors) {
+        return {
+          ...s,
+          links,
+          baseSyntaxColors: { ...s.baseSyntaxColors, [colorKey]: newColor },
+          syntaxColors: { ...s.syntaxColors, [colorKey]: newColor },
+        }
       }
-      if (colorKey in s.ansiColors) {
-        return { ...s, ansiColors: { ...s.ansiColors, [colorKey]: newColor } }
-      }
-      return s
+
+      return { ...s, links }
     })
 
   const s = stateRef.current as ThemeState
+
+  // Derived, so a panel does not have to scan the link table on every render.
+  const linkedSources = new Set(
+    Object.values(s.links).map((link) => link.source)
+  ) as Set<UIKey>
 
   const value: ThemeContextType = {
     isDark: s.isDark,
@@ -330,8 +441,12 @@ export const ThemeProvider: React.FC<{
     colors: s.colors,
     syntaxColors: s.syntaxColors,
     ansiColors: s.ansiColors,
+    links: s.links,
+    linkedSources,
     lockedColors: s.lockedColors,
     activeColor,
+    linkingSource,
+    hoveredSource,
     setIsDark,
     setBaseHue,
     setUiSaturation,
@@ -341,8 +456,15 @@ export const ThemeProvider: React.FC<{
     regenerateUnlocked,
     regenerateAnsiColors,
     toggleColorLock,
+    setColorLocks,
     setActiveColor,
     handleColorChange,
+    startLinking,
+    cancelLinking,
+    linkTarget,
+    unlinkTarget,
+    setLinkAdjust,
+    setHoveredSource,
   }
 
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>

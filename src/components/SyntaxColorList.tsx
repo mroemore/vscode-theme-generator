@@ -1,11 +1,21 @@
 import React from 'react'
 import Color from 'color'
-import { Lock, Unlock, Copy } from 'lucide-react'
+import { Lock, Unlock } from 'lucide-react'
 import { Button } from './ui/button'
 
 import { useTheme } from '@/contexts/ThemeContext'
+import {
+  TargetLinkControls,
+  contrastOn,
+  highlightStyle,
+  tintOn,
+} from './ColorLinkControls'
 
 import type { SyntaxColors, UIColors } from '@/lib/types/colors'
+
+// The syntax panel. Target side of linking: while a placement is open every row is
+// outlined and clicking links instead of selecting, so the mode is always one click
+// away from being used and Escape away from being left.
 
 type ColorListProps = {
   title: string
@@ -18,7 +28,12 @@ const ColorList: React.FC<ColorListProps> = ({ title, isThemeColors }) => {
     syntaxColors,
     lockedColors,
     toggleColorLock,
+    setColorLocks,
     setActiveColor,
+    links,
+    linkingSource,
+    linkTarget,
+    hoveredSource,
   } = useTheme()
 
   const colorList = isThemeColors ? colors : syntaxColors
@@ -27,24 +42,8 @@ const ColorList: React.FC<ColorListProps> = ({ title, isThemeColors }) => {
     ? colorList
     : { ...colorList, selector: (colorList as SyntaxColors).selector }
 
-  const handleUnlockAll = () => {
-    Object.keys(displayColors).forEach((key) => {
-      if (lockedColors.has(key)) {
-        toggleColorLock(key)
-      }
-    })
-  }
-
-  const copyToClipboard = (color: string) => {
-    navigator.clipboard.writeText(color).then(
-      () => {
-        console.log('Color copied to clipboard')
-      },
-      (err) => {
-        console.error('Could not copy text: ', err)
-      }
-    )
-  }
+  const keys = Object.keys(displayColors)
+  const noneLocked = keys.every((key) => !lockedColors.has(key))
 
   const getDisplayColor = (key: string, value: string) => {
     try {
@@ -60,72 +59,66 @@ const ColorList: React.FC<ColorListProps> = ({ title, isThemeColors }) => {
       style={{ backgroundColor: colors.BG1 }}
       className="p-4 border-border border rounded-lg shadow-md"
     >
-      <div className="flex justify-between">
+      <div className="flex justify-between items-center gap-2">
         <h2 className="text-xl font-semibold mb-5">{title}</h2>
 
-        <Button size={'sm'} className="" onClick={handleUnlockAll}>
+        <Button
+          size={'sm'}
+          onClick={() => setColorLocks(keys, false)}
+          disabled={noneLocked}
+          title="Unlock every colour in this panel"
+        >
           Unlock All
         </Button>
       </div>
       <div className="grid grid-rows-4 grid-flow-col auto-cols-auto gap-3 w-full">
-        {Object.entries(displayColors).map(([key, value]) => (
-          <div
-            key={key}
-            style={{
-              borderBottom: '1px solid',
-              borderBottomColor: getDisplayColor(key, value),
-            }}
-            onClick={() => setActiveColor(key)}
-            className="cursor-pointer"
-          >
+        {Object.entries(displayColors).map(([key, value]) => {
+          const link = links[key]
+          const placing = linkingSource !== null
+          const crossHighlighted =
+            hoveredSource !== null && link?.source === hoveredSource
+
+          return (
             <div
-              className="w-full cursor-pointer flex items-center justify-between"
-              style={{}}
+              key={key}
+              onClick={() => (placing ? linkTarget(key) : setActiveColor(key))}
+              title={placing ? `Link to ${linkingSource}` : undefined}
+              style={{
+                borderBottom: '1px solid',
+                borderBottomColor: getDisplayColor(key, value),
+                ...highlightStyle(placing || crossHighlighted, value),
+              }}
+              className="cursor-pointer"
             >
-              <h3
-                className="text-sm truncate first-letter:uppercase pt-1"
-                style={{
-                  color: getDisplayColor(key, value),
-                }}
-              >
-                {key}
-              </h3>
-              <div>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-5 w-5"
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    copyToClipboard(value)
-                  }}
+              <div className="w-full cursor-pointer flex items-center justify-between">
+                <h3
+                  className="text-sm truncate first-letter:uppercase pt-1"
+                  style={{ color: getDisplayColor(key, value) }}
                 >
-                  <Copy size={16} color={getDisplayColor(key, value)} />
-                </Button>
-                <Button
-                  value="ghost"
-                  size="icon"
-                  className="h-5 w-5"
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    toggleColorLock(key)
-                  }}
-                  style={{
-                    backgroundColor: Color(value).isLight()
-                      ? 'rgba(0,0,0,0.1)'
-                      : 'rgba(255,255,255,0.1)',
-                  }}
-                >
-                  {lockedColors.has(key) ? (
-                    <Lock size={16} color={getDisplayColor(key, value)} />
-                  ) : (
-                    <Unlock size={16} color={getDisplayColor(key, value)} />
-                  )}
-                </Button>
+                  {key}
+                </h3>
+                <div className="flex items-center">
+                  <TargetLinkControls targetId={key} value={value} />
+                  <Button
+                    size="icon"
+                    className="h-5 w-5"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      toggleColorLock(key)
+                    }}
+                    style={{ backgroundColor: tintOn(value) }}
+                  >
+                    {lockedColors.has(key) ? (
+                      <Lock size={16} color={contrastOn(value)} />
+                    ) : (
+                      <Unlock size={16} color={contrastOn(value)} />
+                    )}
+                  </Button>
+                </div>
               </div>
             </div>
-          </div>
-        ))}
+          )
+        })}
       </div>
     </div>
   )

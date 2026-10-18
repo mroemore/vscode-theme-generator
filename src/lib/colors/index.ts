@@ -33,6 +33,25 @@ export {
 } from './spec'
 export { ColorScheme } from './schemes'
 export {
+  ansiTargetId,
+  applyLinks,
+  dropLink,
+  isAnsiTarget,
+  targetKey,
+  targetsOf,
+  type Link,
+  type LinkResolutionInput,
+  type LinkTargetId,
+  type Links,
+} from './links'
+export {
+  SHAPE_CHOICES,
+  generateSchemeColors,
+  normaliseHue,
+  schemeOffsets,
+  type ShapeParams,
+} from './schemes'
+export {
   drawAssignment,
   drawTheme,
   redrawAnsi,
