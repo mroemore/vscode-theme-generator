@@ -341,20 +341,24 @@ Recommended shape draws: `m ∈ {5,7,9}`; `k ∈ {5,7,8,9,10,11}`; the `n` set =
 ### 5.1 State and resolution points
 
 ```ts
-type LinkTarget = { kind: 'syntax'; key: SyntaxKey } | { kind: 'ansi'; key: AnsiKey }
-
+// As built. A target is named by a flat id following the app's existing convention for
+// `lockedColors` and `activeColor`: a syntax key is bare (`keyword`) and an ANSI key is
+// prefixed (`ansiRed`). One link per target is therefore structural — `Links` is a
+// record keyed by that id, so there is no array a duplicate could grow into.
+type LinkTargetId = string
 type Link = {
-  source: UIKey          // theme colour only
-  target: LinkTarget
-  adjust: boolean        // true = readability-adjusted copy (default), false = raw alias
+  source: UIKey   // theme colour only; direction is strictly top-down
+  adjust: boolean // true = readability-adjusted copy (default), false = raw alias
 }
+type Links = Record<LinkTargetId, Link>
 ```
 
-- **Cardinality:** at most one link per target (a new link replaces the old and the old reverts); one source may feed many targets. "One per target" should be structurally impossible to violate (a keyed directory, not an array).
+- **Cardinality:** at most one link per target (a new link replaces the old and the old reverts); one source may feed many targets. Structural, not enforced.
 - **Direction:** source ∈ UI keys only; target ∈ syntax ∪ ANSI.
-- **One central `applyLinks(colours, ansiColors, links)` step** runs after **any** change to a source value — generation (Randomize, Regenerate, scheme change, hue drag), the saturation sliders, and direct edits through `handleColorChange`. The review's key correction (§0.3 #7): every edit affordance funnels through `handleColorChange` (`ThemeContext.tsx:238-264`), so "after every generation" would have missed the *common* path. Specifically: a UI-saturation drag changes a source's saturation via `updateThemeColorsWithSaturation`, so links fed by that source must re-resolve; a syntax-saturation drag must **not** touch a linked target (see below).
-- **Linked targets are exempt** from the syntax saturation rewrite and from the syntax readability rewrite, because they do not own a saturation or their own contrast policy — they re-derive from the source. "Survives a saturation drag" therefore means *the link persists and the target follows its source*, not *the target is frozen*.
-- **Survives:** Randomize Full/Few, Regenerate Unlocked, scheme change, both saturation drags, mode toggle, ANSI regeneration.
+- **One central `applyLinks` step** runs after **any** change to a source value — generation (Randomize, Regenerate, scheme change, hue drag), the saturation sliders, and direct edits through `handleColorChange`. In the build this is not a call site convention but a single funnel: `ThemeState` holds the generator's output (`baseSyntaxColors`/`baseAnsiColors`) beside the displayed palette, and `commit` is the only place the second is derived from the first. Every transition goes through `commit`, so "after every generation" cannot miss the common path — a rule that a hand-maintained list of call sites would eventually break.
+- **Linked targets are exempt** from the syntax saturation rewrite and from the syntax readability rewrite, because they do not own a saturation or their own contrast policy — they re-derive from the source. "Survives a saturation drag" therefore means *the link persists and the target follows its source*, not *the target is frozen*. Mechanically: the sliders act on the **base**, so a linked colour's stored value stays current underneath its link and unlink still lands on the right colour.
+- **Source edits propagate** for free: editing a theme colour changes the base the links read from, and `commit` re-derives. No per-source bookkeeping.
+- **Survives:** Randomize Full/Few, Regenerate Unlocked, scheme change, both saturation drags, mode toggle, ANSI regeneration, a BG1 edit (which re-resolves the bases through the locks).
 
 ### 5.2 Resolution
 
@@ -362,18 +366,23 @@ For target `t`, source `s`, toggle `adjust`:
 
 ```
 raw = Color(uiColors[s]).hex()              // alpha stripped once, here (§0.3 #8)
-adjusted, by target:
-  syntax, t !== 'comment' : ensureReadability(raw, BG1, 5.5)
-  syntax, t === 'comment' : adjustCommentColor(ensureReadability(raw, BG1, 5.5), BG1, 3/1.5, 3.25/2.5)
-  ansi,   t !== 'Black'   : ensureReadability(raw, BG1, 4.5)
-  ansi,   t === 'Black'   : raw            // keeps today's #000000 exception
+adjusted, by target, with the policy READ FROM THE SPEC TABLES the generator uses:
+  syntax : syntaxSpec[t].readability
+             kind 'floor'          → ensureReadability(raw, BG1, policy.contrast)
+             kind 'floor-then-band'→ adjustCommentColor(
+                                       ensureReadability(raw, BG1, policy.pre),
+                                       BG1, policy.band[dark|light][0..1])   // comment
+             kind 'none'           → raw
+  ansi   : ansiSpec[t].readable ? ensureReadability(raw, BG1, 4.5) : raw
+           // false for Black AND BrightBlack — two rows, not one
 displayed = adjust ? adjusted : raw
 ```
 
+- Deriving the floors from the spec tables rather than restating them is the point: change a floor in one place and both the generated colour and its linked copy move together. Restating them would let a link silently diverge from the colour it stands in for — and the first draft of this spec did get it wrong, naming only `Black`.
 - `comment` uses the generator's **two-step** policy (§0.1, §0.3 #1), so a linked comment looks like a comment rather than like a type token.
 - Both adjusters preserve hue for free (they only move lightness/saturation).
 - Alpha is stripped at `raw`, so `adjust` toggles readability only and never alpha. This is what makes all 16 sources usable (§9 item 5).
-- `adjust` defaults to `true`; the toggle sits on the target pill beside the link icon and is visible only while linked.
+- `adjust` defaults to `true`; the toggle sits on the target pill beside the unlink icon and is visible only while linked.
 - A raw alias that is unreadable is the user's explicit choice; **no warning UI** was requested.
 
 ### 5.3 Revert
@@ -382,13 +391,14 @@ The base (generated) value of every key is retained alongside the displayed valu
 
 ### 5.4 Interaction
 
-1. **Theme pills** (`ColorList.tsx`): Copy → Link (lucide `Link`). Clicking enters **link-placement mode**.
-2. **Placement mode:** every linkable target (all syntax pills, all ANSI rows) is visually highlighted; the source pill's Link button shows its active state; `Escape` or a second click on the same button cancels; another source's Link button switches the mode.
-3. **Targets** (`SyntaxColorList.tsx`, `AnsiColorList.tsx`): clicking a highlighted target creates/replaces the link and exits placement mode. Linked targets render a **right-aligned link icon with a slightly changed colour** to signal "actively linked".
-4. **Tooltips:** hovering a linked target's icon names the source key (`FG3`). Hovering a link icon **highlights every item linked to that source** — the hovered pill, the source pill, and every sibling target. Implementation: a `hoveredSource` id in context consumed by all three panels, rendered as an outline/ring (non-destructive; never a colour mutation, so the exported colours cannot be affected by hover).
-5. **Unlink:** clicking the link icon removes the link and re-displays the base.
-6. **Editing a linked target** (picker, hex field, hex entry) unlinks it and applies the edit.
-7. `Copy` is removed from all three panels; the hex field under the picker is the replacement.
+1. **Theme pills** (`ColorList.tsx`): Copy → Link (lucide `Link`). Clicking enters **link-placement mode**. The icon is drawn at reduced opacity until the colour has a link, then at full strength in the pill's contrasting colour — the "slightly changed colour when actively linked" the human partner asked for.
+2. **Placement mode:** every linkable target (all syntax pills, all ANSI rows) is outlined; the source pill's Link button wears an inset ring and its tooltip names the count of targets; a hint line in the theme panel names the source and says Escape cancels. Escape, or a second click on the same button, cancels; another source's Link button switches the mode.
+3. **Targets** (`SyntaxColorList.tsx`, `AnsiColorList.tsx`): clicking an outlined target creates/replaces the link and exits placement mode. While placing, the row's own selection is suppressed — one click, one meaning.
+4. **Linked targets** render two right-aligned affordances inside the row's label area: the **adjust toggle** (lucide `Contrast`) and the **unlink** icon (lucide `Unlink`, tooltip naming the source key). Both stop propagation so neither selects the colour.
+5. **Cross-highlighting:** hovering a theme pill's Link button, or a linked target's controls, sets `hoveredSource` in context; all three panels outline the source pill and every target fed by it. Rendered as a box-shadow ring only — never a colour mutation, so hover cannot affect the exported palette.
+6. **Unlink:** click removes the link and re-displays the base.
+7. **Editing a linked target** (picker, hex field, hex entry) unlinks it and applies the edit — `handleColorChange` drops the link before writing, so every affordance is covered by construction rather than by each one remembering to.
+8. `Copy` is removed from all three panels; the hex field under the picker is the replacement. Verified absent from `src/`.
 
 ### 5.5 Locks
 
@@ -396,9 +406,16 @@ Linking a **locked** syntax target: recommendation **(a) link overrides the lock
 
 ### 5.6 Verification
 
-- Harness: across the full `source × target × {adjust on, off}` space, `adjust: true` meets the target's floor (except `ansi/Black`), both settings preserve the source's hue within `color`-library rounding, and unlink returns exactly the pre-link hex — including after a Randomize, which is the assertion that proves the Phase B dependency.
+- Harness (`.tmp_files/phase-e.ts`, 18473 checks, all passing): across the full `source × target × {adjust on, off}` space (9216 combinations) `adjust: true` meets the target's floor, `adjust: false` is byte-exact to the source with alpha stripped, and both are always `#RRGGBB`; unlink returns exactly the pre-link hex **including when the base came from a lock**, which is the assertion that proves the base/display split; 36/36 links survive a redraw, a saturation change and a BG1 edit; a linked target holds while an unlinked sibling follows the slider; a theme with no links is byte-identical to the base.
+- Regression: the exported JSON is byte-identical to a no-links export when no links exist (the same assertion as above, at the palette level).
 - Manual: link `FG3 → type`, drag Base Hue, confirm both move and the relationship holds; link `AC1 → comment` and confirm the muted ramp; toggle adjust off for the raw hex; edit the linked pill and confirm it unlinks; hover and confirm cross-highlighting.
-- Regression: the exported JSON is byte-identical to a no-links export when no links exist.
+- Two harness bugs were found by this pass and are worth remembering: an earlier draft used a `string` syntax key that **does not exist** (string literals are `punctuationQuote`), making an assertion compare `undefined` to `undefined` and pass vacuously; and `ensureReadability`'s floor was being judged on an internal float that `hex()` rounding could push back under (see §5.7). Both were fixed; the harness now pins the key counts so a phantom key fails loudly.
+
+### 5.7 A floor that wasn't: `ensureReadability`'s rounding boundary
+
+Found while writing §5.6, and fixed in the same commit. The loop compared `color.contrast(bg)` on the `color` library's internal float, then returned `color.hex()`. Eight-bit rounding can move the result back under the floor: measured `5.4999 → 5.4857` (79 of 18355 link assertions failed their floor, 5.4949 in a direct probe). The loop now judges the rounded colour it actually returns, so the floor is a guarantee rather than a near-miss.
+
+Blast radius, measured by dumping the 680-combination baseline with and without the fix (`.tmp_files/parity.ts`, then `analyse-round.ts`): 416 values move across 256 combinations, 1–2 steps per channel (max 22/255), and **202 colours that were below their floor now meet it**. The moves run in both directions because the adjustment step is not contrast-monotone — `lighten().saturate()` can lower relative luminance for a saturated colour, since green carries most of the luminance weight. That is not a defect in itself (the loop still only stops once the floor is met) but it explains why a fix described as "tighten the floor" also brightens and darkens in equal measure.
 
 ---
 
@@ -435,18 +452,21 @@ The partner's stated order — de-dup, then stability, then schemes, then Lock A
 | file | A | B | C | D | E |
 |---|---|---|---|---|---|
 | `src/lib/colors/schemes.ts` | new (enum moved) | — | offsets table, repaired/removed, `schemeOffsets`, `schemePoolLength` | — | — |
-| `src/lib/colors/{spec,ui,syntax,ansi,index}.ts` | new | — | via schemes | — | link resolution helper |
+| `src/lib/colors/{spec,ui,syntax,ansi,index}.ts` | new | — | via schemes | — | re-export link types |
 | `src/lib/colors/assignment.ts` | — | new | shape params drawn | — | — |
-| `src/lib/types/colors.ts` | derive from spec; re-export `ColorScheme` | assignment type re-export | — | — | link types |
+| `src/lib/colors/links.ts` | — | — | — | — | new — link types + pure `applyLinks`, floors read from the spec tables |
+| `src/lib/types/colors.ts` | derive from spec; re-export `ColorScheme` | assignment type re-export | — | — | re-export link types |
 | `src/lib/utils/uiColors.ts` | iterate spec | resolve assignment | pass `assignment.shape` | — | — |
-| `src/lib/utils/syntaxColors.ts` | iterate spec | resolve assignment | — | — | link exemption |
-| `src/lib/utils/ansiColors.ts` | iterate spec | stability (§2.5) | — | — | link exemption |
-| `src/lib/utils/colorUtils.ts` | comment floor guarantee | — | scheme table moved out; `degreesToRadians` deleted | — | — |
-| `src/contexts/ThemeContext.tsx` | BG1-edit lock fix | assignment state; retire `schemeHues` | — | — | `links`, `hoveredSource`, link actions, `applyLinks` |
-| `src/components/ColorList.tsx` | — | — | — | Lock All | Link button; remove Copy |
-| `src/components/SyntaxColorList.tsx` | — | — | — | — | target pill, icon, tooltip, hover |
+| `src/lib/utils/syntaxColors.ts` | iterate spec | resolve assignment | — | — | — |
+| `src/lib/utils/ansiColors.ts` | iterate spec | stability (§2.5) | — | — | — |
+| `src/lib/utils/colorUtils.ts` | comment floor guarantee | polarity + floor-at-the-boundary fix (§5.7) | scheme table moved out; `degreesToRadians` deleted | — | — |
+| `src/contexts/ThemeContext.tsx` | BG1-edit lock fix | assignment state; retire `schemeHues`; base/display split + `commit` | — | `toggleAllLocks` | `links`, `hoveredSource`, link actions, link dropping on edit |
+| `src/components/ColorList.tsx` | — | — | — | Lock All; one-pass Unlock All | Link button + placement-hint line; remove Copy |
+| `src/components/SyntaxColorList.tsx` | — | — | — | — | placement + link affordances, hover ring |
 | `src/components/AnsiColorList.tsx` | — | — | — | — | same |
+| `src/components/ColorLinkControls.tsx` | — | — | — | — | new — the two target affordances, shared by both target panels |
 | `src/components/ThemeControls.tsx` | — | Randomize draws an assignment; wire `few` honestly | — | — | — |
+| `src/app/page.tsx` | — | — | — | — | one `TooltipProvider` for the tree |
 | `.gitignore`, `tsconfig.json` | exclude `.tmp_files` (done) | | | | |
 
 ---
@@ -462,4 +482,5 @@ All seven are settled. Recorded with the outcome as built, so the doc and the co
 5. **The three alpha keys as link sources** (§5.2). **All 16 allowed, alpha stripped at resolution** — implemented in Phase E.
 6. **ANSI stability in Phase B** (§2.5). **Done — yes.** ANSI resolves from the assignment's own seed and re-rolls only on `Regenerate ANSI`.
 7. **Repaired scheme constants** (§3.3). **Built; awaiting one on-screen review.** Shape constants now come from `ShapeParams` on the assignment (five consecutive side counts from a choice ring for `NestedPolygons`, a fold order for `RosettePattern`, a major-segment count and two windings for the torus pair). Measured: `Torus` 2→7 distinct hues and 89°→289° arc spread, `DoubleTorus` 3→7 / 90°→256°, `RosettePattern` 2→7 / 90°→309°, `NestedPolygons` 113°→240°.
+8. **`ensureReadability`'s polarity/termination bug** (§0.1, §5.7). **Done — fixed across B and E.** B flipped the direction to be taken from the *background* (`goDarker = bgColor.isLight()`) and added a pole fallback, taking floored UI keys below their floor from 666/6720 to 0. E then fixed the second, subtler half: the floor was judged on the internal float and `hex()` rounding could push the returned value back under it (5.4999 → 5.4857). Floors and bands are now read from the spec tables by both the generator and the link layer.
 
