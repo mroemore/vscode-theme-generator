@@ -114,7 +114,7 @@ const SCHEMES = Object.values(ColorScheme).filter(
 /** The locked subset of a colour record — what a resolve must carry through untouched. */
 function pickLocked(
   source: Record<string, string>,
-  locked: Set<string>
+  locked: ReadonlySet<string>
 ): Record<string, string> {
   const out: Record<string, string> = {}
   for (const key of locked) {
@@ -122,6 +122,27 @@ function pickLocked(
     if (value !== undefined) out[key] = value
   }
   return out
+}
+
+/**
+ * The carry set for an *unlock*: the locks, plus every other key in the same panel. The
+ * unlocked colours therefore regenerate while their neighbours keep what they are
+ * showing — so unlocking one colour cannot sweep away a manual edit elsewhere.
+ *
+ * Deliberately scoped to one panel. Unlocking a theme colour can change `BG1`, and the
+ * syntax palette must then re-resolve against the new background; carrying syntax keys
+ * here would leave them adjusted for a background that no longer exists.
+ */
+function carryExcept(s: ThemeState, unlocked: readonly string[]): ReadonlySet<string> {
+  const skip = new Set(unlocked)
+  const carry = new Set(s.lockedColors)
+  const source = unlocked.every((k) => k in s.colors)
+    ? Object.keys(s.colors)
+    : unlocked.every((k) => k in s.baseSyntaxColors)
+      ? Object.keys(s.baseSyntaxColors)
+      : []
+  for (const k of source) if (!skip.has(k)) carry.add(k)
+  return carry
 }
 
 /**
@@ -144,8 +165,12 @@ function relink(s: ThemeState): ThemeState {
  * Re-resolve every *base* colour from one state snapshot. Pure and deterministic: given
  * the same state it returns the same palette, and it consumes no randomness. Links are
  * applied by the caller (`commit`), so there is exactly one place they are resolved.
+ *
+ * `carry` names the keys whose present value survives the resolve untouched. It is
+ * normally the lock set — but see `carryExcept`: unlocking one colour must re-resolve
+ * *that* colour without disturbing its neighbours.
  */
-function resolveAll(s: ThemeState): ThemeState {
+function resolveAll(s: ThemeState, carry: ReadonlySet<string> = s.lockedColors): ThemeState {
   const input = {
     assignment: s.assignment,
     scheme: s.scheme,
@@ -156,7 +181,7 @@ function resolveAll(s: ThemeState): ThemeState {
 
   const colors = resolveUiColors(
     input,
-    pickLocked(s.colors, s.lockedColors) as Partial<UIColors>
+    pickLocked(s.colors, carry) as Partial<UIColors>
   )
   const pools = buildPools(input, colors)
   const baseSyntaxColors = resolveSyntaxColors(
@@ -166,16 +191,24 @@ function resolveAll(s: ThemeState): ThemeState {
       syntaxSaturation: s.syntaxSaturation,
       backgroundColor: colors.BG1,
     },
-    pickLocked(s.baseSyntaxColors, s.lockedColors) as Partial<SyntaxColors>
+    pickLocked(s.baseSyntaxColors, carry) as Partial<SyntaxColors>
   )
   const baseAnsiColors = resolveAnsiColors(s.assignment, colors.BG1)
 
   return { ...s, colors, baseSyntaxColors, baseAnsiColors }
 }
 
-/** One full theme drawn from a fresh seed — the initial snapshot, with no flash of defaults. */
-function bootstrap(isDark: boolean): ThemeState {
-  const theme = drawTheme(randomSeed(), 'full', SCHEMES)
+/**
+ * One full theme drawn from a seed.
+ *
+ * The seed is a parameter, not always random, because the *first* render is server-side
+ * rendered too: a random seed here would draw one palette on the server and a different
+ * one in the browser, and React would report a hydration mismatch and regenerate the
+ * whole tree. `BOOTSTRAP_SEED` keeps the first paint identical on both sides; the
+ * provider then draws a fresh random theme once, after mount.
+ */
+function bootstrap(isDark: boolean, seed: number): ThemeState {
+  const theme = drawTheme(seed, 'full', SCHEMES)
   const base: ThemeState = {
     isDark,
     baseHue: theme.baseHue,
@@ -194,6 +227,9 @@ function bootstrap(isDark: boolean): ThemeState {
   return relink(resolveAll(base))
 }
 
+/** Fixed, so the server-rendered palette and the first client render agree. */
+const BOOTSTRAP_SEED = 0
+
 const ThemeContext = createContext<ThemeContextType | undefined>(undefined)
 
 export const ThemeProvider: React.FC<{
@@ -210,7 +246,8 @@ export const ThemeProvider: React.FC<{
   const stateRef = useRef<ThemeState | null>(null)
   if (stateRef.current === null) {
     // next-themes has not resolved yet on the first render; dark is the app default.
-    stateRef.current = bootstrap(resolvedTheme !== 'light')
+    // Deterministic, so this render matches the server's (see `bootstrap`).
+    stateRef.current = bootstrap(resolvedTheme !== 'light', BOOTSTRAP_SEED)
   }
 
   const commit = useCallback((mutate: (s: ThemeState) => ThemeState) => {
@@ -218,12 +255,32 @@ export const ThemeProvider: React.FC<{
     setVersion((v) => v + 1)
   }, [])
 
-  /** Re-resolve every base from a mutated snapshot and adopt the result. */
+  /**
+   * Re-resolve every base from a mutated snapshot and adopt the result. `carryIn` names
+   * the keys whose present value must survive the resolve — normally just the locks, but
+   * an unlock passes its own panel's keys so that only the unlocked colours regenerate.
+   */
   const commitResolved = useCallback(
-    (mutate: (s: ThemeState) => ThemeState) =>
-      commit((s) => resolveAll(mutate(s))),
+    (
+      mutate: (s: ThemeState) => ThemeState,
+      carryIn?: (next: ThemeState) => ReadonlySet<string>
+    ) =>
+      commit((s) => {
+        const next = mutate(s)
+        return resolveAll(next, carryIn ? carryIn(next) : next.lockedColors)
+      }),
     [commit]
   )
+
+  // The first render was deterministic so the server and client agree. Now that we are
+  // definitely in the browser, draw a fresh random theme — every visit still starts
+  // somewhere new, and Randomize remains the way to ask for another.
+  const bootstrapped = useRef(false)
+  useEffect(() => {
+    if (bootstrapped.current) return
+    bootstrapped.current = true
+    commitResolved((s) => bootstrap(s.isDark, randomSeed()))
+  }, [commitResolved])
 
   // Adopt the mode next-themes actually resolved, once it knows. The bootstrap above
   // has to guess; this corrects it without touching the assignment, so the palette
@@ -314,23 +371,42 @@ export const ThemeProvider: React.FC<{
       assignment: redrawAnsi(s.assignment, randomSeed()),
     }))
 
+  // Locking freezes the value that is on screen right now (`commit` — a plain write, so
+  // nothing else in the palette is disturbed). Unlocking *regenerates* that colour, which
+  // needs a resolve with the rest of the panel carried through (`carryExcept`). Without
+  // that asymmetry an unlock would appear to do nothing until the next unrelated change,
+  // while an unlink already reverts immediately — the two should behave alike.
   const toggleColorLock = (colorKey: string) =>
-    commit((s) => {
-      const lockedColors = new Set(s.lockedColors)
-      if (lockedColors.has(colorKey)) lockedColors.delete(colorKey)
-      else lockedColors.add(colorKey)
-      return { ...s, lockedColors }
-    })
+    stateRef.current?.lockedColors.has(colorKey)
+      ? commitResolved(
+          (s) => {
+            const lockedColors = new Set(s.lockedColors)
+            lockedColors.delete(colorKey)
+            return { ...s, lockedColors }
+          },
+          (next) => carryExcept(next, [colorKey])
+        )
+      : commit((s) => {
+          const lockedColors = new Set(s.lockedColors)
+          lockedColors.add(colorKey)
+          return { ...s, lockedColors }
+        })
 
   const setColorLocks = (colorKeys: readonly string[], locked: boolean) =>
-    commit((s) => {
-      const lockedColors = new Set(s.lockedColors)
-      for (const key of colorKeys) {
-        if (locked) lockedColors.add(key)
-        else lockedColors.delete(key)
-      }
-      return { ...s, lockedColors }
-    })
+    locked
+      ? commit((s) => {
+          const lockedColors = new Set(s.lockedColors)
+          for (const key of colorKeys) lockedColors.add(key)
+          return { ...s, lockedColors }
+        })
+      : commitResolved(
+          (s) => {
+            const lockedColors = new Set(s.lockedColors)
+            for (const key of colorKeys) lockedColors.delete(key)
+            return { ...s, lockedColors }
+          },
+          (next) => carryExcept(next, colorKeys)
+        )
 
   const startLinking = (source: UIKey) =>
     setLinkingSource((current) => (current === source ? null : source))

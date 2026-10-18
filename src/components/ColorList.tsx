@@ -121,6 +121,9 @@ const ColorList: React.FC<ColorListProps> = ({ title, isThemeColors }) => {
                     e.stopPropagation()
                     toggleColorLock(key)
                   }}
+                  aria-label={
+                    lockedColors.has(key) ? `Unlock ${key}` : `Lock ${key}`
+                  }
                   style={{ backgroundColor: tintOn(value as string) }}
                 >
                   {lockedColors.has(key) ? (

@@ -328,7 +328,9 @@ Linking a **locked** syntax target: the link overrides the lock, the lock is ret
 ### E6 — verification
 
 Harness over the full `source × target × {adjust on, off}` space:
-- `adjust: true` meets the target's floor, except `ansi/Black`;
+- `adjust: true` meets the target's floor, except `ansi/Black` and `ansi/BrightBlack`
+  (both `readable: false` in the spec table — a black entry in a terminal palette is a
+  black entry, and lifting it to 4.5 defeats the point);
 - both settings preserve the source's hue within `color`-library rounding;
 - **unlink returns exactly the pre-link hex — including after a Randomize** (this is the assertion that proves the B dependency);
 - with no links present, exported JSON is byte-identical to a links-free build.
@@ -341,6 +343,20 @@ Manual: link `FG3 → type`, drag Base Hue, confirm both move and the relationsh
 
 ## Deviations and notes
 
+- **Post-E refinement — lock freezes, unlock regenerates.** Locking was always a plain
+  write (nothing else in the palette moves). Unlocking is now a *resolve with the rest of
+  the same panel carried through* (`resolveAll(s, carry)` + `carryExcept`), so the
+  unlocked colour regenerates on the spot instead of appearing to do nothing until the
+  next unrelated change. The asymmetry is deliberate: an unlink already reverts its
+  target immediately, and a lock/unlock pair that behaved differently would read as a
+  bug. Carrying is scoped to one panel on purpose — unlocking a theme colour can move
+  `BG1`, and the syntax palette must then re-resolve against the new background rather
+  than hold values adjusted for the old one.
+- **Also worth knowing:** a hand-picked colour is transient. Any regeneration (Base Hue,
+  Saturation, Scheme, mode switch, Randomize) re-resolves every *unlocked* colour, so
+  locking is the only way to keep one. This matches the pre-existing behaviour, and the
+  link layer inherits it: a link is re-applied after every regeneration, but the base
+  underneath it moves.
 - **Not committed:** the parity harness and any probe (`.tmp_files/`, gitignored, tsconfig-excluded). Referenced in each phase's commit message.
 - **Untouched by design:** `export.ts` / `exportTheme.ts` (Q4a), `presets`, `SavedThemeSchema`, `ThemePreview`/Monaco/TextMate, mobile layout, ANSI lock controls.
 - **Phase B changes generated palettes** (stable assignment replaces per-call draws) — that is the point of the phase, and it is not a parity failure. Phase A is the only phase that must be byte-identical.
