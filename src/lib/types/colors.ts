@@ -1,178 +1,31 @@
 import * as monaco from 'monaco-editor'
 import { z } from 'zod'
 
-export type UIColors = {
-  BG1: string
-  BG2: string
-  BG3: string
-  FG1: string
-  FG2: string
-  FG3: string
-  AC1: string
-  AC2: string
-  BORDER: string
-  INFO: string
-  ERROR: string
-  WARNING: string
-  SUCCESS: string
-  lineHighlight: string
-  selection: string
-  findMatch: string
-}
+import { ColorScheme } from '@/lib/colors/schemes'
+import { ANSI_KEYS, ansiSpec } from '@/lib/colors/ansi'
+import { SYNTAX_KEYS, syntaxSpec } from '@/lib/colors/syntax'
+import { UI_KEYS, uiSpec } from '@/lib/colors/ui'
+import { makeInitial } from '@/lib/colors/spec'
+import type { AnsiKey } from '@/lib/colors/ansi'
+import type { SyntaxKey } from '@/lib/colors/syntax'
+import type { UIKey } from '@/lib/colors/ui'
 
-export type AnsiColors = {
-  Black: string
-  Red: string
-  Green: string
-  Yellow: string
-  Blue: string
-  Magenta: string
-  Cyan: string
-  White: string
-  BrightBlack: string
-  BrightRed: string
-  BrightGreen: string
-  BrightYellow: string
-  BrightBlue: string
-  BrightMagenta: string
-  BrightCyan: string
-  BrightWhite: string
-}
+// Re-exported for the existing importers (`@/lib/types/colors`).
+export { ColorScheme }
 
-export type SyntaxColors = {
-  keyword: string
-  comment: string
-  function: string
-  functionCall: string
-  variable: string
-  variableDeclaration: string
-  variableProperty: string
-  type: string
-  typeParameter: string
-  constant: string
-  class: string
-  parameter: string
-  property: string
-  operator: string
-  storage: string
-  other: string
-  language: string
-  punctuation: string
-  punctuationQuote: string
-  punctuationBrace: string
-  punctuationComma: string
-  selector: string
-  support: string
-  modifier: string
-  control: string
-  controlFlow: string
-  controlImport: string
-  tag: string
-  tagPunctuation: string
-  attribute: string
-  unit: string
-  datetime: string
-}
+// ── Domain types ──────────────────────────────────────────────────────────────
+// Derived from the spec key tuples, so adding a colour to `src/lib/colors/<domain>.ts`
+// is the only edit needed: type, initial value, generator, saturation and schema all
+// follow from it. `Record<K, KeySpec>` on the spec makes a missing or misspelled row a
+// compile error, so the tuple and the spec cannot drift apart.
 
-export const initialColors: UIColors = {
-  BG1: '#1E1E1E',
-  BG2: '#252526',
-  BG3: '#2D2D30',
-  FG1: '#D4D4D4',
-  FG2: '#CCCCCC',
-  FG3: '#121212',
-  AC1: '#007ACC',
-  AC2: '#0098FF',
-  BORDER: '#474747',
-  INFO: '#9CDCFE',
-  ERROR: '#F48771',
-  WARNING: '#CCA700',
-  SUCCESS: '#89D185',
-  lineHighlight: '#2F313710',
-  selection: '#264F7820',
-  findMatch: '#515C6A20',
-}
+export type UIColors = { [K in UIKey]: string }
+export type AnsiColors = { [K in AnsiKey]: string }
+export type SyntaxColors = { [K in SyntaxKey]: string }
 
-export const initialSyntaxColors: SyntaxColors = {
-  keyword: '#569CD6',
-  comment: '#6A9955',
-  function: '#DCDCAA',
-  variable: '#9CDCFE',
-  type: '#4EC9B0',
-  //   typeDeclaration: '#4EC9B0',
-  constant: '#4FC1FF',
-  class: '#4EC9B0',
-  operator: '#D4D4D4',
-  parameter: '#9CDCFE',
-  property: '#9CDCFE',
-  other: '#D4D4D4',
-  punctuation: '#D4D4D4',
-  punctuationQuote: '#D4D4D4',
-  punctuationBrace: '#D4D4D4',
-  punctuationComma: '#D4D4D4',
-  selector: '#D7BA7D',
-  storage: '#C586C0',
-  support: '#C586C0',
-  modifier: '#C586C0',
-  control: '#C586C0',
-  controlFlow: '#C586C0',
-  controlImport: '#C586C0',
-  tag: '#C586C0',
-  tagPunctuation: '#C586C0',
-  attribute: '#C586C0',
-  functionCall: '#DCDCAA',
-  variableDeclaration: '#9CDCFE',
-  variableProperty: '#9CDCFE',
-  typeParameter: '#4EC9B0',
-  language: '#D4D4D4',
-  unit: '#D4D4D4',
-  datetime: '#D4D4D4',
-}
-
-export enum ColorScheme {
-  Monochromatic,
-  Analogous,
-  Complementary,
-  SplitComplementary,
-  Triadic,
-  Tetradic,
-  GoldenRatio,
-  GoldenRatio3,
-  Fibonacci,
-  PentagramStar,
-  VesicaPiscis,
-  FlowerOfLife,
-  PlatonicSolids,
-  SpiralOfTheodorus,
-  MetatronsCube,
-  SeedOfLife,
-  FibonacciSequence,
-  GoldenSpiral,
-  MetallicMeans,
-  ContinuedFraction,
-  GoldenTrisection,
-  FareySequence,
-  NobleNumbers,
-  GoldenTriangle,
-  SriYantra,
-  KabbalahTreeOfLife,
-  Torus,
-  MandelbrotSet,
-  SierpinskiTriangle,
-  KochSnowflake,
-  CelticKnot,
-  Labirinth,
-  YinYang,
-  StarTetrahedron,
-  Hamsa,
-  Enneagram,
-  Hexagram,
-  ChakraSymbols,
-  SpiralDynamics,
-  DoubleTorus,
-  RosettePattern,
-  NestedPolygons,
-}
+export const initialColors: UIColors = makeInitial(uiSpec)
+export const initialSyntaxColors: SyntaxColors = makeInitial(syntaxSpec)
+export const initialAnsiColors: AnsiColors = makeInitial(ansiSpec)
 
 export type ThemeGenerationOptions = {
   isDark: boolean
@@ -218,78 +71,19 @@ export type VSCodeTheme = {
 }
 export type IMonacoThemeRule = monaco.editor.ITokenThemeRule[]
 
-export const UIColorsSchema = z.object({
-  BG1: z.string(),
-  BG2: z.string(),
-  BG3: z.string(),
-  FG1: z.string(),
-  FG2: z.string(),
-  FG3: z.string(),
-  AC1: z.string(),
-  AC2: z.string(),
-  BORDER: z.string(),
-  INFO: z.string(),
-  ERROR: z.string(),
-  WARNING: z.string(),
-  SUCCESS: z.string(),
-  lineHighlight: z.string(),
-  selection: z.string(),
-  findMatch: z.string(),
-})
+// ── Schemas ───────────────────────────────────────────────────────────────────
+// One `z.string()` per key, in declaration order, built from the same tuples.
+const stringShape = <K extends string>(
+  keys: readonly K[]
+): Record<K, z.ZodString> =>
+  Object.fromEntries(keys.map((key) => [key, z.string()])) as Record<
+    K,
+    z.ZodString
+  >
 
-export const SyntaxColorsSchema = z.object({
-  keyword: z.string(),
-  comment: z.string(),
-  function: z.string(),
-  functionCall: z.string(),
-  variable: z.string(),
-  variableDeclaration: z.string(),
-  variableProperty: z.string(),
-  type: z.string(),
-  typeParameter: z.string(),
-  constant: z.string(),
-  class: z.string(),
-  parameter: z.string(),
-  property: z.string(),
-  operator: z.string(),
-  storage: z.string(),
-  other: z.string(),
-  language: z.string(),
-  punctuation: z.string(),
-  punctuationQuote: z.string(),
-  punctuationBrace: z.string(),
-  punctuationComma: z.string(),
-  selector: z.string(),
-  support: z.string(),
-  modifier: z.string(),
-  control: z.string(),
-  controlFlow: z.string(),
-  controlImport: z.string(),
-  tag: z.string(),
-  tagPunctuation: z.string(),
-  attribute: z.string(),
-  unit: z.string(),
-  datetime: z.string(),
-})
-
-export const AnsiColorsSchema = z.object({
-  Black: z.string(),
-  Red: z.string(),
-  Green: z.string(),
-  Yellow: z.string(),
-  Blue: z.string(),
-  Magenta: z.string(),
-  Cyan: z.string(),
-  White: z.string(),
-  BrightBlack: z.string(),
-  BrightRed: z.string(),
-  BrightGreen: z.string(),
-  BrightYellow: z.string(),
-  BrightBlue: z.string(),
-  BrightMagenta: z.string(),
-  BrightCyan: z.string(),
-  BrightWhite: z.string(),
-})
+export const UIColorsSchema = z.object(stringShape(UI_KEYS))
+export const SyntaxColorsSchema = z.object(stringShape(SYNTAX_KEYS))
+export const AnsiColorsSchema = z.object(stringShape(ANSI_KEYS))
 
 // Update the SavedThemeSchema to match the database schema
 export const SavedThemeSchema = z.object({

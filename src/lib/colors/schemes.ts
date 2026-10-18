@@ -1,0 +1,51 @@
+// Leaf module: the colour-scheme enum lives here rather than in `types/colors.ts`
+// so that importing it does not drag in the `monaco-editor` type import that
+// `types/colors.ts` carries for `IMonacoThemeRule`.
+//
+// `types/colors.ts` re-exports `ColorScheme`, so every existing import path
+// (`@/lib/types/colors`) keeps working unchanged.
+
+export enum ColorScheme {
+  Monochromatic,
+  Analogous,
+  Complementary,
+  SplitComplementary,
+  Triadic,
+  Tetradic,
+  GoldenRatio,
+  GoldenRatio3,
+  Fibonacci,
+  PentagramStar,
+  VesicaPiscis,
+  FlowerOfLife,
+  PlatonicSolids,
+  SpiralOfTheodorus,
+  MetatronsCube,
+  SeedOfLife,
+  FibonacciSequence,
+  GoldenSpiral,
+  MetallicMeans,
+  ContinuedFraction,
+  GoldenTrisection,
+  FareySequence,
+  NobleNumbers,
+  GoldenTriangle,
+  SriYantra,
+  KabbalahTreeOfLife,
+  Torus,
+  MandelbrotSet,
+  SierpinskiTriangle,
+  KochSnowflake,
+  CelticKnot,
+  Labirinth,
+  YinYang,
+  StarTetrahedron,
+  Hamsa,
+  Enneagram,
+  Hexagram,
+  ChakraSymbols,
+  SpiralDynamics,
+  DoubleTorus,
+  RosettePattern,
+  NestedPolygons,
+}

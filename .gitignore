@@ -31,6 +31,9 @@ yarn-error.log*
 # vercel
 .vercel
 
+# local scratch (agent probes, parity harnesses)
+.tmp_files/
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts

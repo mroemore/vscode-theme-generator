@@ -1,4 +1,4 @@
-import { ColorScheme } from '@/lib/types/colors'
+import { ColorScheme } from '@/lib/colors/schemes'
 import Color from 'color'
 
 export function generateSchemeColors(
@@ -456,7 +456,16 @@ export function adjustCommentColor(
     comment = comment.desaturate(0.01)
   }
 
-  return comment.hex()
+  // The loop above can bail out through its luminosity guard while the result is still
+  // *below* `minContrast` — measured: #2D2D30 becomes #36363A, contrast ≈1.4 against a
+  // 3.0 floor, because one `lighten` step still leaves luminosity under 0.05. The
+  // saturation cap is cosmetic; an unreadable comment is a bug, so the floor wins.
+  const result = comment.hex()
+  if (Color(result).contrast(bgColor) < minContrast) {
+    return ensureReadability(result, backgroundColor, minContrast)
+  }
+
+  return result
 }
 
 export function ensureReadability(

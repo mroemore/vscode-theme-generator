@@ -250,7 +250,19 @@ export const ThemeProvider: React.FC<{
         if (colorKey === 'BG1') {
           setSyntaxColors((prevSyntaxColors: SyntaxColors) => ({
             ...prevSyntaxColors,
-            ...generateSyntaxColors(newColor, schemeHues, syntaxSaturation),
+            ...generateSyntaxColors(
+              newColor,
+              schemeHues,
+              syntaxSaturation,
+              // A6: pass locked tokens through, as the full generation path does.
+              // Without this every locked syntax colour was silently clobbered by a
+              // background edit.
+              Object.fromEntries(
+                Object.entries(prevSyntaxColors).filter(([key]) =>
+                  lockedColors.has(key)
+                )
+              ) as Partial<SyntaxColors>
+            ),
           }))
         }
       } else if (colorKey in syntaxColors) {
@@ -260,7 +272,7 @@ export const ThemeProvider: React.FC<{
         }))
       }
     },
-    [colors, syntaxColors, schemeHues, syntaxSaturation]
+    [colors, syntaxColors, schemeHues, syntaxSaturation, lockedColors]
   )
 
   const regenerateAnsiColors = useCallback(() => {

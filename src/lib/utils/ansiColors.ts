@@ -1,88 +1,83 @@
 import Color from 'color'
 import { ensureReadability } from './colorUtils'
 import type { AnsiColors } from '@/lib/types/colors'
+import { ANSI_KEYS, ansiSpec, type AnsiRecipe } from '@/lib/colors/ansi'
 
+// ANSI is generated from the background colour alone, in two passes over `ansiSpec`:
+//
+//   pass 1 — every non-derived row, in declaration order (this is what fixes the draw
+//            sequence: the six `spunBright` rows are skipped here);
+//   pass 2 — the `spunBright` rows, each derived from its base key's pass-1 value.
+//
+// The readability floor (4.5) then runs over the rows marked `readable`, which is
+// everything except `Black` (a literal) and `BrightBlack`.
 export function generateAnsiColors(backgroundColor: string): AnsiColors {
   const baseSaturation = 20 + Math.random() * 50 // 20-70
   const baseLightness = 30 + Math.random() * 30 // 30-60
 
-  const generateColor = (baseHue: number, isGrayscale: boolean = false) => {
-    if (isGrayscale) {
-      return Color.hsl(0, 0, baseLightness).hex()
+  const buildRaw = (recipe: AnsiRecipe): string | null => {
+    switch (recipe.kind) {
+      case 'literal':
+        return recipe.value
+      case 'spun': {
+        const hue = (recipe.hue + Math.random() * 60 - 30 + 360) % 360
+        const saturation = Math.max(
+          0,
+          Math.min(100, baseSaturation + Math.random() * 40 - 20)
+        )
+        const lightness = Math.max(
+          20,
+          Math.min(80, baseLightness + Math.random() * 40 - 20)
+        )
+        return Color.hsl(hue, saturation, lightness).hex()
+      }
+      case 'hsl': {
+        // A zero span is not drawn — BrightBlack costs one draw, White costs three.
+        const h =
+          recipe.h[1] > 0 ? recipe.h[0] + Math.random() * recipe.h[1] : recipe.h[0]
+        const s =
+          recipe.s[1] > 0 ? recipe.s[0] + Math.random() * recipe.s[1] : recipe.s[0]
+        const l =
+          recipe.l[1] > 0 ? recipe.l[0] + Math.random() * recipe.l[1] : recipe.l[0]
+        return Color.hsl(h, s, l).hex()
+      }
+      case 'spunBright':
+        return null // deferred to pass 2
     }
-    const hue = (baseHue + Math.random() * 60 - 30 + 360) % 360 // Allow more hue variation
-    const saturation = Math.max(
-      0,
-      Math.min(100, baseSaturation + Math.random() * 40 - 20)
-    )
-    const lightness = Math.max(
-      20,
-      Math.min(80, baseLightness + Math.random() * 40 - 20)
-    )
-    return Color.hsl(hue, saturation, lightness).hex()
   }
 
-  const brightenColor = (color: string) => {
-    const c = Color(color)
+  const colors = {} as AnsiColors
+
+  // pass 1
+  for (const key of ANSI_KEYS) {
+    const raw = buildRaw(ansiSpec[key].recipe)
+    if (raw !== null) colors[key] = raw
+  }
+
+  // pass 2 — brighten each derived key from its base
+  for (const key of ANSI_KEYS) {
+    const recipe = ansiSpec[key].recipe
+    if (recipe.kind !== 'spunBright') continue
+    const base = Color(colors[recipe.base])
     const brightSaturation = Math.min(
-      c.saturationl() + 20 + Math.random() * 20,
+      base.saturationl() + 20 + Math.random() * 20,
       100
     )
     const brightLightness = Math.min(
-      c.lightness() + 20 + Math.random() * 20,
+      base.lightness() + 20 + Math.random() * 20,
       95
     )
-    return c.saturationl(brightSaturation).lightness(brightLightness).hex()
+    colors[key] = base
+      .saturationl(brightSaturation)
+      .lightness(brightLightness)
+      .hex()
   }
 
-  const ensureReadabilityExceptBlack = (color: string, bgColor: string) => {
-    if (color.toLowerCase() === '#000000') return color
-    return ensureReadability(color, bgColor, 4.5)
+  // readability floor, except Black and BrightBlack
+  for (const key of ANSI_KEYS) {
+    if (!ansiSpec[key].readable) continue
+    colors[key] = ensureReadability(colors[key], backgroundColor, 4.5)
   }
-
-  const colors: AnsiColors = {
-    Black: '#000000',
-    Red: generateColor(0),
-    Green: generateColor(120),
-    Yellow: generateColor(45), // Center on orange-yellow
-    Blue: generateColor(240),
-    Magenta: generateColor(300),
-    Cyan: generateColor(180),
-    White: Color.hsl(
-      30 + Math.random() * 30,
-      10 + Math.random() * 15,
-      92 + Math.random() * 8
-    ).hex(), // More beige variation
-    BrightBlack: Color.hsl(0, 0, 20 + Math.random() * 10).hex(), // Darker gray
-    BrightRed: '',
-    BrightGreen: '',
-    BrightYellow: '',
-    BrightBlue: '',
-    BrightMagenta: '',
-    BrightCyan: '',
-    BrightWhite: Color.hsl(
-      30 + Math.random() * 30,
-      5 + Math.random() * 10,
-      97 + Math.random() * 3
-    ).hex(), // Slight beige tint
-  }
-
-  // Generate bright colors based on their counterparts
-  ;['Red', 'Green', 'Yellow', 'Blue', 'Magenta', 'Cyan'].forEach((color) => {
-    colors[`Bright${color}` as keyof AnsiColors] = brightenColor(
-      colors[color as keyof AnsiColors]
-    )
-  })
-
-  // Ensure readability for all colors except Black and BrightBlack
-  Object.keys(colors).forEach((key) => {
-    if (key !== 'Black' && key !== 'BrightBlack') {
-      colors[key as keyof AnsiColors] = ensureReadabilityExceptBlack(
-        colors[key as keyof AnsiColors],
-        backgroundColor
-      )
-    }
-  })
 
   return colors
 }
