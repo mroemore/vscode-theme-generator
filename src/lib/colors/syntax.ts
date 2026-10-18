@@ -79,6 +79,28 @@ export interface SyntaxKeySpec extends Omit<KeySpec, 'hue' | 'lightness'> {
   inverseLightness?: boolean
 }
 
+/**
+ * The lightness each mode's shift is added to (high-contrast tokens) and subtracted from
+ * (`inverseLightness`, i.e. `comment`). The generator uses these rather than its own
+ * literals so that a row's declared range and the ceiling it will actually meet cannot
+ * drift apart.
+ */
+export const SYNTAX_LIGHTNESS = {
+  dark: { base: 80, inverse: 15 },
+  light: { base: 25, inverse: 85 },
+} as const
+
+/**
+ * No high-contrast row may declare a shift that reaches this in dark mode. At lightness
+ * 100 the colour is pure white whatever its hue (measured: all 8 sampled hues collapse to
+ * `#FFFFFF`), so the token loses its hue entirely and collides with every sibling that
+ * also clamped. 99 still merges hues at low saturation; 98 keeps all 8 sampled hues
+ * distinct at every saturation in use. `punctuationQuote`/`punctuationComma` (declared max
+ * 23 → 80 + 23 = 103) and `punctuationBrace` (6..19 → 99) all overran it before their
+ * ranges were pulled back. `.tmp_files/phase-b.ts` asserts this stays true.
+ */
+export const SYNTAX_LIGHTNESS_CEILING = 98
+
 const FLOOR_55 = { kind: 'floor', contrast: 5.5 } as const
 
 export const syntaxSpec: Record<SyntaxKey, SyntaxKeySpec> = {
@@ -220,7 +242,9 @@ export const syntaxSpec: Record<SyntaxKey, SyntaxKeySpec> = {
     initial: '#D4D4D4',
     group: 'punctuation',
     sat: 0.45,
-    lightShift: { min: 5, max: 23 },
+    // Brightest of the punctuation family, but inside the ceiling: at 80 + 23 this
+    // clamped to pure white in 20% of dark palettes and lost its hue.
+    lightShift: { min: 5, max: 18 },
     hueShift: { min: 9, max: 17 },
     readability: FLOOR_55,
   },
@@ -228,7 +252,7 @@ export const syntaxSpec: Record<SyntaxKey, SyntaxKeySpec> = {
     initial: '#D4D4D4',
     group: 'punctuation',
     sat: 0.4,
-    lightShift: { min: 6, max: 19 },
+    lightShift: { min: 6, max: 18 },
     hueShift: { min: 13, max: 21 },
     readability: FLOOR_55,
   },
@@ -236,7 +260,7 @@ export const syntaxSpec: Record<SyntaxKey, SyntaxKeySpec> = {
     initial: '#D4D4D4',
     group: 'punctuation',
     sat: 0.45,
-    lightShift: { min: 5, max: 23 },
+    lightShift: { min: 5, max: 18 },
     hueShift: { min: 0, max: 15 },
     readability: FLOOR_55,
   },

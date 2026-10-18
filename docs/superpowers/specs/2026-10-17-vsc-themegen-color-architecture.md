@@ -324,6 +324,22 @@ Names kept; offsets become independent of `baseHue`. Constants are indicative �
 
 Recommended shape draws: `m ∈ {5,7,9}`; `k ∈ {5,7,8,9,10,11}`; the `n` set = five consecutive entries of `{3,4,5,6,8,12}` from a drawn start; `φ ∈ {30,45,60,72,90}`. Where a pool is shorter than the code needs, entries repeat (as today). These constants are the difference between "Torus looks like a torus" and "Torus is a 7-step wheel" (§9 item 7) — delegating them is fine, but they should be *seen* once on screen.
 
+### 3.4 Two defects the phase measured and fixed
+
+Both were pre-existing, both were flagged during Phase B, and both are *spec-range* defects — a row declaring a range the generator cannot honour — which is why they live in the tables rather than in the generator.
+
+**The dark-mode lightness ceiling.** A high-contrast syntax token renders at `80 + lightShift` in dark mode, clamped at 100. Three punctuation rows declared shifts that overran it — `punctuationQuote`/`punctuationComma` `{5,23}` → 103, `punctuationBrace` `{6,19}` → 99. Lightness 100 is pure white whatever the hue (measured: all 8 sampled hues collapse to `#FFFFFF`), so the token lost its hue and became indistinguishable from every sibling that also clamped: 20% of dark palettes, two tokens identical at white. Hue still merges for some hues at 99; at 98 all 8 sampled hues stay distinct at every saturation in use. So: ceiling 98, rows pulled back to `{5,18}` and `{6,18}`.
+
+The bases and the ceiling are now exported from `src/lib/colors/syntax.ts` (`SYNTAX_LIGHTNESS`, `SYNTAX_LIGHTNESS_CEILING`) and the generator reads them instead of holding its own literals, so a row's declared range and the ceiling it actually meets cannot drift apart. `.tmp_files/phase-b.ts` §8 asserts no row (and no future row) overruns it.
+
+**The light-mode accent band.** `AC1`/`AC2` lightness in light mode was `fgBase + {0,40}` / `fgBase + {0,50}`, and `fgBase` in light mode is 0-15 — so the *accent* could be as dark as, or darker than, the body text; the worst case in that range is pure black, which is what the Phase B pass reported (`#070B06`). Anchoring the jitter 20/24 above the base keeps an accent at least 11 lightness above `FG1` for the same base while still varying with the theme. Measured after: `AC1` L 22.5-52.7, `AC2` L 22.9-58.4 over 34 schemes × 5 hues × 3 seeds.
+
+`.tmp_files/phase-b.ts` §8 asserts both, so the fix persists as an invariant rather than a value.
+
+### 3.5 Known, deliberately not fixed
+
+`buildPools` reads `Color(colors.AC1).hue()` / `Color(colors.AC2).hue()` back out of the **rendered hex** to build the `ac1`/`ac2` harmonic pools. A one-step change in an accent's lightness therefore perturbs the hue read from it, and every token drawing from those pools moves with it — which is why the §3.4 accent fix shifts ~50-86 combos per syntax key by a single channel step, in light mode and `full` pool mode only. No visual consequence. Handing the internal hue back from the resolve instead of re-reading the hex would change how *every* `full` palette is derived, so it is recorded as a follow-up, not folded into a phase whose charter was scheme repair.
+
 ---
 
 ## 4. Phase D — Lock All
@@ -483,4 +499,6 @@ All seven are settled. Recorded with the outcome as built, so the doc and the co
 6. **ANSI stability in Phase B** (§2.5). **Done — yes.** ANSI resolves from the assignment's own seed and re-rolls only on `Regenerate ANSI`.
 7. **Repaired scheme constants** (§3.3). **Built; awaiting one on-screen review.** Shape constants now come from `ShapeParams` on the assignment (five consecutive side counts from a choice ring for `NestedPolygons`, a fold order for `RosettePattern`, a major-segment count and two windings for the torus pair). Measured: `Torus` 2→7 distinct hues and 89°→289° arc spread, `DoubleTorus` 3→7 / 90°→256°, `RosettePattern` 2→7 / 90°→309°, `NestedPolygons` 113°→240°.
 8. **`ensureReadability`'s polarity/termination bug** (§0.1, §5.7). **Done — fixed across B and E.** B flipped the direction to be taken from the *background* (`goDarker = bgColor.isLight()`) and added a pole fallback, taking floored UI keys below their floor from 666/6720 to 0. E then fixed the second, subtler half: the floor was judged on the internal float and `hex()` rounding could push the returned value back under it (5.4999 → 5.4857). Floors and bands are now read from the spec tables by both the generator and the link layer.
+9. **The two spec-range defects Phase B flagged** (§3.4). **Done — fixed with C.** Dark-mode syntax tokens used to clamp at pure white (`punctuationQuote`/`punctuationComma` 20% of dark palettes; `punctuationBrace` over 99); the rows are pulled back under an exported ceiling of 98 that §3.4 derives from measurement. Light-mode `AC1`/`AC2` could land as dark as the body text (worst case black); their band now starts above the foreground.
+10. **The accent pools are derived from a rounded hex** (§3.5). **Deliberately open.** `buildPools` re-reads `AC1`/`AC2`'s hue from the rendered hex, so 1-bit lightness noise in an accent propagates a 1-step hue change into the `ac1`/`ac2` pools. Measured, characterised, and left for a follow-up because the clean fix re-derives every `full` palette.
 

@@ -357,6 +357,34 @@ Manual: link `FG3 → type`, drag Base Hue, confirm both move and the relationsh
   locking is the only way to keep one. This matches the pre-existing behaviour, and the
   link layer inherits it: a link is re-applied after every regeneration, but the base
   underneath it moves.
+- **Post-C — the two defects Phase B flagged, now fixed.** Both were pre-existing and
+  both were flagged during Phase B rather than smuggled into it; Phase C's harness work
+  then measured them.
+  1. *Dark-mode syntax tokens clamped at pure white.* Several punctuation rows declared
+     lightness shifts the generator had to clamp: `punctuationQuote`/`punctuationComma`
+     `{5,23}` → `80+23 = 103`, and `punctuationBrace` `{6,19}` → 99. At lightness 100 the
+     colour is white whatever its hue (measured: all 8 sampled hues collapse to
+     `#FFFFFF`), so the token lost its hue and collided with its siblings — 20% of dark
+     palettes, two tokens identical at white. Now `{5,18}` and `{6,18}`, inside a ceiling
+     of 98 (measured: hue survives at 98 for every hue and every saturation in use; 99
+     already merges some). The ceiling and both bases are exported from
+     `src/lib/colors/syntax.ts` and read by the generator, so a row's declared range and
+     the ceiling it actually meets cannot drift; `.tmp_files/phase-b.ts` §8 asserts it.
+  2. *Light-mode accents could land near-black.* `AC1`/`AC2` light lightness was
+     `fgBase + {0,40}` / `+ {0,50}`, and in light mode `fgBase` is 0-15 — so the *accent*
+     could be as dark as, or darker than, the body text (measured worst case in this
+     range: pure black). Jitter now starts 20/24 above the base, keeping an accent at
+     least 11 lightness above `FG1` for the same base. Measured after: `AC1` L 22.5-52.7,
+     `AC2` L 22.9-58.4 across 34 schemes × 5 hues × 3 seeds.
+- **Known, not fixed — the accent pools are derived from a rounded hex.** `buildPools`
+  reads `Color(colors.AC1).hue()` and `Color(colors.AC2).hue()` back out of the *rendered*
+  hex to build the `ac1`/`ac2` harmonic pools. That round-trip means a change of one 8-bit
+  step in an accent's lightness perturbs the hue read from it, and therefore every token
+  drawing from those pools. It is why fixing the light-mode accents moves ~50-86 combos
+  per syntax key by a single channel step, in light mode and `full` pool mode only. No
+  visual consequence, and the fix (have the resolve hand back the internal hue rather than
+  re-reading the hex) changes how every `full` palette is derived, so it is left as a
+  follow-up rather than folded in here.
 - **Not committed:** the parity harness and any probe (`.tmp_files/`, gitignored, tsconfig-excluded). Referenced in each phase's commit message.
 - **Untouched by design:** `export.ts` / `exportTheme.ts` (Q4a), `presets`, `SavedThemeSchema`, `ThemePreview`/Monaco/TextMate, mobile layout, ANSI lock controls.
 - **Phase B changes generated palettes** (stable assignment replaces per-call draws) — that is the point of the phase, and it is not a parity failure. Phase A is the only phase that must be byte-identical.

@@ -110,7 +110,12 @@ export const uiSpec: Record<UIKey, KeySpec> = {
     sliderSat: 1.2,
     lightness: {
       dark: { kind: 'const', value: 60 },
-      light: { kind: 'from', base: 'fgBase', jitter: { min: 0, max: 40 } },
+      // Anchored above the foreground band rather than at it. In light mode `fgBase` is
+      // 0-15, so a jitter starting at 0 put an *accent* colour as dark as — or darker
+      // than — the body text: a near-black accent on a white background. Starting 20
+      // above the base keeps an accent at least 11 lightness above FG1 for the same
+      // base, while still letting it vary with the theme.
+      light: { kind: 'from', base: 'fgBase', jitter: { min: 20, max: 45 } },
     },
     readability: FLOOR_45,
   },
@@ -121,7 +126,7 @@ export const uiSpec: Record<UIKey, KeySpec> = {
     sliderSat: 1.1,
     lightness: {
       dark: { kind: 'const', value: 65 },
-      light: { kind: 'from', base: 'fgBase', jitter: { min: 0, max: 50 } },
+      light: { kind: 'from', base: 'fgBase', jitter: { min: 24, max: 50 } },
     },
     readability: FLOOR_45,
   },

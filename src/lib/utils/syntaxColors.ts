@@ -1,7 +1,11 @@
 import Color from 'color'
 import { ensureReadability } from './colorUtils'
 import type { SyntaxColors } from '@/lib/types/colors'
-import { SYNTAX_KEYS, syntaxSpec } from '@/lib/colors/syntax'
+import {
+  SYNTAX_KEYS,
+  SYNTAX_LIGHTNESS,
+  syntaxSpec,
+} from '@/lib/colors/syntax'
 import { applyReadability, resolveDrawable } from '@/lib/colors/spec'
 import { resolvePoolHue } from '@/lib/colors/assignment'
 import type { Assignment } from '@/lib/colors/assignment'
@@ -31,8 +35,12 @@ export function resolveSyntaxColors(
   const { assignment, pools, syntaxSaturation, backgroundColor } = input
   const baseColor = Color(backgroundColor)
   const isDark = baseColor.isDark()
-  const baseLightness = isDark ? 80 : 25
-  const inverseBaseLightness = isDark ? 15 : 85
+  const baseLightness = isDark
+    ? SYNTAX_LIGHTNESS.dark.base
+    : SYNTAX_LIGHTNESS.light.base
+  const inverseBaseLightness = isDark
+    ? SYNTAX_LIGHTNESS.dark.inverse
+    : SYNTAX_LIGHTNESS.light.inverse
 
   const generateColor = (
     poolHue: number,
