@@ -442,6 +442,16 @@ Found while writing §5.6, and fixed in the same commit. The loop compared `colo
 
 Blast radius, measured by dumping the 680-combination baseline with and without the fix (`.tmp_files/parity.ts`, then `analyse-round.ts`): 416 values move across 256 combinations, 1–2 steps per channel (max 22/255), and **202 colours that were below their floor now meet it**. The moves run in both directions because the adjustment step is not contrast-monotone — `lighten().saturate()` can lower relative luminance for a saturated colour, since green carries most of the luminance weight. That is not a defect in itself (the loop still only stops once the floor is met) but it explains why a fix described as "tighten the floor" also brightens and darkens in equal measure.
 
+### 5.8 A button that looked dead: `regenerateAnsiColors` went through `commit`
+
+Found in Phase 2 while adding the compact controls, where the four action buttons sit side by side and a
+dead one is obvious. `regenerateAnsiColors` mutated the assignment through `commit`, but a redraw only
+replaces the **ANSI** part of the assignment — `commit` derives the displayed palette from the bases,
+and nothing had touched `baseAnsiColors`, so the new ANSI palette never reached the screen and the
+button read as broken. It now goes through `commitResolved`, which re-resolves the panel, with locks
+riding through as usual (`ThemeContext.tsx`). One line, and the sort of thing only a side-by-side
+button row makes visible.
+
 ---
 
 ## 6. Phase order and dependencies

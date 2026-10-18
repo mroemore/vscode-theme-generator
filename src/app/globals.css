@@ -64,3 +64,61 @@
     @apply bg-background text-foreground;
   }
 }
+
+/*
+ * Phase 2 mobile — the picker module in the flat language (spec §3.5).
+ *
+ * Scoped to `.flat-picker` so the desktop picker keeps its stock rounded look (§6.3 is still open on
+ * whether desktop adopts the flat language). react-colorful injects its own stylesheet at runtime, so
+ * each rule below carries an extra class to out-specify it rather than reaching for !important.
+ */
+.flat-picker .react-colorful {
+  width: 100%;
+  height: auto;
+  border-radius: 0;
+}
+.flat-picker .react-colorful__saturation {
+  flex: none;
+  aspect-ratio: 1 / 1;
+  /* the stock 12px solid black bar between saturation and hue — the most visible "gap" */
+  border-bottom: none;
+  border-radius: 0;
+}
+.flat-picker .react-colorful__hue,
+.flat-picker .react-colorful__alpha {
+  height: 18px;
+  border-radius: 0;
+}
+.flat-picker .react-colorful__pointer,
+.flat-picker .react-colorful__saturation-pointer,
+.flat-picker .react-colorful__hue-pointer,
+.flat-picker .react-colorful__alpha-pointer {
+  width: 12px;
+  height: 12px;
+  border-radius: 0;
+  border: 1px solid #fff;
+  box-shadow: none;
+}
+
+/* The hex row sits above the picker and shares its edge; the name is its right-hand label. */
+.flat-picker__hex {
+  position: relative;
+  display: flex;
+}
+.flat-picker__hex input {
+  border-radius: 0;
+  text-align: left;
+  padding-right: 5.5rem;
+  font-variant-numeric: tabular-nums;
+}
+.flat-picker__label {
+  position: absolute;
+  top: 50%;
+  right: 0.5rem;
+  transform: translateY(-50%);
+  pointer-events: none;
+  font-size: 0.625rem;
+  line-height: 1;
+  letter-spacing: 0.04em;
+  opacity: 0.6;
+}

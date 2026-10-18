@@ -365,8 +365,11 @@ export const ThemeProvider: React.FC<{
       }
     })
 
+  // A redraw only replaces the ANSI part of the assignment, so the panel has to be
+  // re-resolved for it to reach the screen — `commit` alone would leave `baseAnsiColors`
+  // untouched and the button would look dead. Locks ride through the resolve as usual.
   const regenerateAnsiColors = () =>
-    commit((s) => ({
+    commitResolved((s) => ({
       ...s,
       assignment: redrawAnsi(s.assignment, randomSeed()),
     }))

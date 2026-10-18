@@ -122,6 +122,17 @@ Three calls made during review rather than asked, all cheap to flip:
 - **(c)** the 24px round grab handle becomes a 12px square outlined handle, matching the hard edges.
   A round handle on a square surface is the one piece that would look wrong either way.
 
+As built (M4), and the one place the drawing was not the spec: the picker goes **full-bleed**, and
+react-colorful's saturation box is square, so at 390px wide it renders 374×374 — about 44% of an
+844px viewport, more than the mockup suggested. That is the honest reading of "full-bleed instead of
+the fixed 200px block" (the alternative, a capped non-square box, is a new call, not an inherited
+one), and the hex row above it now reads as the module's header. Flagged as open item 6 rather than
+quietly capped.
+
+The flat look is **scoped to a `flat` prop** (`ActiveColorPicker flat`), passed only by
+`MobileShell`; the desktop picker keeps react-colorful's stock rounded look. So §6.3's "does desktop
+adopt the flat language" is now a one-line change — drop the prop — rather than a rewrite.
+
 ### 3.6 Compact Theme Controls
 
 - The four action buttons (`Randomize Full`, `Randomize with Few Colors`, `Regenerate Unlocked`,
@@ -136,6 +147,23 @@ Representative selection only: the mock **title bar**, the **Monaco editor**, an
 The activity bar and the file explorer are dropped, the fixed height comes down to fit a phone, and
 `minimap` is disabled. The file selector moves into the title bar as a chevron control so the snippets
 are still reachable.
+
+As built (M5), behind a `compact` prop on `ThemePreview` — again the same shape as M3/M4, so desktop
+keeps the 800px frame, the rail, the explorer, the minimap and the footnote.
+
+- **A second snippet set, not the desktop one truncated.** `mobileSnippets` is one short snippet per
+  file, each covering comment, keyword, type, string, number, function and punctuation in as few lines
+  as the language allows. This is the point of the step: the desktop tour's long lines clipped
+  mid-token at 390px, which loses the very thing the preview is for. The probe asserts no `.view-line`
+  overflows its `.overflow-guard`, so "representative" means "fits", not "shorter".
+- **Height 260px**, no border (the module's fill already separates it), font size 12, `minimap` off,
+  `lineNumbersMinChars` 2, and the `File Edit View Help` menu row plus the footnote gone.
+- **The chevron is a real menu**, not a decoration: it opens a list of the snippet files and switching
+  one swaps the Monaco model. Desktop's explorer keeps doing the same job.
+
+Two things the probe pins that a screenshot would not: the frame is under 400px tall *and* the editor
+text is the compact set, so a future change that quietly reverts to the desktop snippets fails rather
+than looking plausible at a glance.
 
 ### 3.8 Icons
 
@@ -170,13 +198,18 @@ mobile layout adds.
    Acceptable, or does the pinned region want a max height with its own scroll?
 2. ~~The three picker calls in §3.5 (a/b/c).~~ Decided in review: the hex row sits above the picker,
    the stock black bar goes, and the handle is a 12px square outline. M4 implements them.
-3. Whether the desktop layout adopts the flat module language later (§0 assumption).
+3. Whether the desktop layout adopts the flat module language later (§0 assumption). The picker is now
+   already there — the flat look lives behind `ActiveColorPicker`'s `flat` prop, which only
+   `MobileShell` passes, so desktop adoption is dropping the prop rather than a rewrite.
 4. Does the strip mark a selection when the page has none? Today the fallback selection shows in the
    static header but draws no outline (see §3.4), which keeps "no selection" visually distinct from
    "selected the first key" — confirm that reads right on a phone.
 5. Should the theme module let a link be *cancelled* by re-pressing its source button? §4.4 covers
    `Escape` for a pending placement, and unlinking is done from the target's header, so the source
    button currently has no toggle-off.
+6. The picker's saturation box is full-bleed and therefore square (374×374 at 390px — 44% of a phone
+   viewport, see §3.5 as built). Keep it square, or cap the height at ~240px and accept a
+   non-square surface?
 
 ## 7. Verification
 
@@ -186,9 +219,15 @@ mobile layout adds.
 - A new mobile probe, `.tmp_files/pw/probe-mobile.ts`, driving a 390×844 viewport: bottom bar toggles
   module visibility; pinning a second module unpins the first; a pinned module stays put while the
   scroller moves; horizontal scrollers report `scrollWidth > clientWidth`; the picker renders squared
-  with the name over the hex field; selecting a box updates the static header.
+  with the name over the hex field; selecting a box updates the static header. M3 adds the compact
+  controls assertions (one icon row, full-width hue, two half-width saturations), M4 the picker's
+  flat-language assertions (radii `0px`, the stock black bar suppressed, saturation/hue and
+  hex/picker flush to the pixel, square 12px handle, the label inside the hex field's right half),
+  and M5 the pared-preview assertions (compact section, no rail / explorer / menu row / footnote,
+  frame under 400px, no line clipped off the right edge, and the title-bar chevron opening a file menu
+  that swaps the Monaco model).
 
-## 8. As built (M1–M2)
+## 8. As built (M1–M4)
 
 Where the implementation diverged from the plan above, and why.
 
@@ -222,6 +261,29 @@ breakpoint hook and the storage helper).
 "Lock All" wording deliberately does not apply to them (matching desktop: no bulk lock on theme), but
 per-key locking and theme pinning do.
 
+**M3 — the compact controls are a `compact` prop on `ThemeControls`.** The four actions become one
+icon-only row, the hue slider keeps full width, and the two saturations share a 50/50 row; desktop
+keeps the stacked labels and full-width buttons. Same shape as the picker: the mobile shape is a prop
+the shell passes, so the desktop component is not branched and not duplicated.
+
+**M5 — the pared preview is a `compact` prop on `ThemePreview`**, and its snippet set is a second one
+(`mobileSnippets`), not the desktop tour truncated. See §3.7 as built: the point is that every snippet
+fits 390px without clipping mid-token, which is what the desktop lines did.
+
+**M3–M5 evidence** (390×844, against the live dev server):
+
+| Check | Result |
+| --- | --- |
+| `.tmp_files/pw/probe-mobile.ts` | 106 passed / 0 failed |
+| `.tmp_files/pw/check.ts` (desktop, 52) | 52 passed / 0 failed |
+| `bun run build` | clean, no lint warnings |
+
+Measured rather than asserted: saturation radius `0px`, hue radius `0px`, handle `12×12` at `0px`
+radius, saturation `border-bottom` `0px` (the stock black bar), saturation→hue seam `676 → 676`, hex
+row→picker seam `302 → 302`, input `text-align: left`, and the `INFO` label at x 349..374 inside the
+hex field's 8..382. Typing `#ff0000` moved the strip header from `INFO #4695FF` to `INFO #FF0000`,
+so the field still funnels through `handleColorChange`.
+
 **M1–M2 evidence** (all against the live dev server at 390×844 or desktop width):
 
 | Check | Result |
@@ -238,3 +300,7 @@ light hues and previously relied on the random per-load draw happening to leave 
 tokens. A low-saturation draw made the comparison measure nothing while still reporting a pass, so the
 section now drives both saturation sliders to 100 first and asserts the count it actually compared
 (29 tokens, 7 theme colours) — non-vacuous by construction rather than by luck.
+
+A second one, from M4: **Monaco renders whitespace as `U+00A0`**, not a regular space, so any probe
+marker with a space in it never byte-matches the editor's text. Normalize both sides
+(`.replace(/\u00a0/g, ' ')`) at the comparison boundary.

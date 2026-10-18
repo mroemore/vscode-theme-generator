@@ -80,7 +80,7 @@ const MobileShell: React.FC = () => {
     ModuleId,
     { title: string; count?: number; actions?: React.ReactNode; node: React.ReactNode }
   > = {
-    controls: { title: 'Theme Controls', node: <ThemeControls /> },
+    controls: { title: 'Theme Controls', node: <ThemeControls compact /> },
     colors: {
       title: 'Theme Colors',
       count: 16,
@@ -94,7 +94,7 @@ const MobileShell: React.FC = () => {
       node: <ColorStrip domain="syntax" />,
     },
     ansi: { title: 'ANSI Colors', count: 16, node: <ColorStrip domain="ansi" /> },
-    preview: { title: 'Editor Preview', node: <ThemePreview /> },
+    preview: { title: 'Editor Preview', node: <ThemePreview compact /> },
   }
 
   // The picker joins the column above the rest whenever a colour is selected; it has no toggle.
@@ -118,7 +118,7 @@ const MobileShell: React.FC = () => {
           fill={fill}
           cast={cast}
         >
-          <ActiveColorPicker />
+          <ActiveColorPicker flat />
         </Module>
       )
     }

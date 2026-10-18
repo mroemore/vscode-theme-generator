@@ -1,5 +1,6 @@
 import React, { useRef, useCallback, useEffect, useState } from 'react'
 import dynamic from 'next/dynamic'
+import { IconChevronDown } from '@tabler/icons-react'
 import { useTheme } from '../contexts/ThemeContext'
 import type { editor } from 'monaco-editor'
 import { loadWASM } from 'onigasm'
@@ -512,7 +513,93 @@ const codeSnippets = {
 
 type CodeSnippetKey = keyof typeof codeSnippets
 
-const ThemePreview: React.FC = () => {
+// Mobile preview snippets: a representative selection of tokens on lines short enough to fit a
+// phone without horizontal clipping — not the full desktop tour. One per file so the title-bar
+// file selector still reaches every language (spec §3.7); each covers comment, keyword, type,
+// string, number, function and punctuation in as few lines as the language allows.
+const mobileSnippets: Record<CodeSnippetKey, string> = {
+  'typescript.tsx':
+    '// Theme tokens\n' +
+    'interface User {\n' +
+    '  id: number\n' +
+    '  name: string\n' +
+    '}\n' +
+    '\n' +
+    'const greet = (u: User) => {\n' +
+    '  return `Hi ${u.name}`\n' +
+    '}\n' +
+    '\n' +
+    'export default greet\n',
+
+  'javascript.js':
+    '// Fetch and log\n' +
+    'const users = [1, 2, 3]\n' +
+    '\n' +
+    'async function load(id) {\n' +
+    '  const res = await fetch(id)\n' +
+    '  return res.json()\n' +
+    '}\n' +
+    '\n' +
+    'users.forEach((u) => log(u))\n' +
+    'export default load\n',
+
+  'python.py':
+    '# Theme tokens\n' +
+    'from dataclasses import dataclass\n' +
+    '\n' +
+    '@dataclass\n' +
+    'class User:\n' +
+    '    id: int\n' +
+    '    age: int = 0\n' +
+    '    name: str\n' +
+    '\n' +
+    'def greet(u: User) -> str:\n' +
+    '    return f"Hi {u.name}"\n',
+
+  'markdown.md':
+    '# Theme tokens\n' +
+    '\n' +
+    'A **bold** word and\n' +
+    'a [link](x.y), plus `code`.\n' +
+    '\n' +
+    '- list item\n' +
+    '- *emphasis*\n' +
+    '\n' +
+    '> quoted text\n' +
+    '\n' +
+    '    const x = 1\n',
+
+  'html.html':
+    '<!doctype html>\n' +
+    '<html lang="en">\n' +
+    '  <head>\n' +
+    '    <title>Theme</title>\n' +
+    '  </head>\n' +
+    '  <body>\n' +
+    '    <h1 class="title">Hi</h1>\n' +
+    '    <a href="/docs">Docs</a>\n' +
+    '  </body>\n' +
+    '</html>\n',
+
+  'css.css':
+    '/* Theme tokens */\n' +
+    ':root {\n' +
+    '  --accent: #7c9cff;\n' +
+    '  --radius: 4px;\n' +
+    '}\n' +
+    '\n' +
+    '.card:hover {\n' +
+    '  color: var(--accent);\n' +
+    '  border-radius: var(--radius);\n' +
+    '}\n',
+}
+
+interface ThemePreviewProps {
+  /** Mobile: drop the icon rail, explorer and footnote, and show a short representative snippet. */
+  compact?: boolean
+}
+
+const ThemePreview: React.FC<ThemePreviewProps> = ({ compact = false }) => {
   const { colors, syntaxColors, ansiColors } = useTheme()
   const [isEditorReady, setIsEditorReady] = useState(false)
   const [isOnigasmInitialized, setIsOnigasmInitialized] = useState(false)
@@ -523,6 +610,7 @@ const ThemePreview: React.FC = () => {
 
   const [selectedFile, setSelectedFile] =
     useState<CodeSnippetKey>('typescript.tsx')
+  const [fileMenuOpen, setFileMenuOpen] = useState(false)
 
   const getTheme = useCallback((): editor.IStandaloneThemeData => {
     const { themeJSON, themeObject } = generateSemanticThemeJSON(
@@ -677,13 +765,14 @@ const ThemePreview: React.FC = () => {
   }
 
   return (
-    <section>
+    <section data-compact={compact ? 'true' : 'false'}>
       <div
+        data-testid="preview-frame"
         style={{
-          height: '800px',
+          height: compact ? '260px' : '800px',
           display: 'flex',
           flexDirection: 'column',
-          border: `1px solid ${colors.BORDER}`,
+          border: compact ? 'none' : `1px solid ${colors.BORDER}`,
         }}
       >
         {/* Mock VS Code title bar */}
@@ -698,18 +787,89 @@ const ThemePreview: React.FC = () => {
           <span style={{ color: colors.FG1 }} className="text-xs">
             VS Code Theme Preview
           </span>
-          <span style={{ color: colors.FG2 }} className="text-xs">
-            File Edit View Help
-          </span>
+          {compact ? (
+            <div style={{ position: 'relative' }}>
+              <button
+                type="button"
+                data-testid="preview-file-select"
+                data-file={selectedFile}
+                aria-expanded={fileMenuOpen}
+                onClick={() => setFileMenuOpen((open) => !open)}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 3,
+                  background: 'transparent',
+                  border: 'none',
+                  padding: 0,
+                  color: colors.FG2,
+                  fontSize: 12,
+                  cursor: 'pointer',
+                }}
+              >
+                {selectedFile}
+                <IconChevronDown size={14} />
+              </button>
+              {fileMenuOpen && (
+                <div
+                  data-testid="preview-file-menu"
+                  style={{
+                    position: 'absolute',
+                    top: '100%',
+                    right: 0,
+                    zIndex: 30,
+                    marginTop: 4,
+                    background: colors.BG2,
+                    boxShadow: '0 6px 14px rgba(0, 0, 0, 0.55)',
+                    minWidth: 160,
+                  }}
+                >
+                  {Object.keys(codeSnippets).map((filename) => (
+                    <button
+                      key={filename}
+                      type="button"
+                      data-file={filename}
+                      onClick={() => {
+                        setSelectedFile(filename as CodeSnippetKey)
+                        setFileMenuOpen(false)
+                      }}
+                      style={{
+                        display: 'block',
+                        width: '100%',
+                        textAlign: 'left',
+                        padding: '7px 10px',
+                        background:
+                          selectedFile === filename
+                            ? colors.AC1
+                            : 'transparent',
+                        color:
+                          selectedFile === filename ? colors.BG1 : colors.FG2,
+                        border: 'none',
+                        cursor: 'pointer',
+                        fontSize: 12,
+                      }}
+                    >
+                      {filename}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          ) : (
+            <span style={{ color: colors.FG2 }} className="text-xs">
+              File Edit View Help
+            </span>
+          )}
         </div>
 
         <div style={{ display: 'flex', flex: 1 }} className="text-xs">
           {/* Mock VS Code sidebar */}
           <div
+            data-testid="preview-rail"
             style={{
               width: '25px',
               backgroundColor: colors.BG2,
-              display: 'flex',
+              display: compact ? 'none' : 'flex',
               flexDirection: 'column',
               alignItems: 'center',
               padding: '10px 0',
@@ -742,11 +902,13 @@ const ThemePreview: React.FC = () => {
 
           {/* Mock VS Code explorer */}
           <div
+            data-testid="preview-explorer"
             style={{
               width: '150px',
               backgroundColor: colors.BG2,
               borderRight: `1px solid ${colors.BORDER}`,
               padding: '10px',
+              display: compact ? 'none' : 'block',
             }}
           >
             <div style={{ color: colors.FG1, marginBottom: '5px' }}>
@@ -773,13 +935,16 @@ const ThemePreview: React.FC = () => {
             <MonacoEditor
               height="100%"
               language={getLanguage(selectedFile)}
-              value={codeSnippets[selectedFile]}
+              value={
+                compact ? mobileSnippets[selectedFile] : codeSnippets[selectedFile]
+              }
               theme="custom-theme"
               options={{
-                minimap: { enabled: true },
+                minimap: { enabled: !compact },
                 scrollBeyondLastLine: false,
-                fontSize: 13,
+                fontSize: compact ? 12 : 13,
                 readOnly: true,
+                lineNumbersMinChars: compact ? 2 : undefined,
                 bracketPairColorization: {
                   enabled: false,
                   independentColorPoolPerBracketType: false,
@@ -807,11 +972,13 @@ const ThemePreview: React.FC = () => {
           <span style={{ color: colors.FG3 }}>Ln 1, Col 1</span>
         </div>
       </div>
-      <p className="text-xs text-center mt-2">
-        * This is a preview of the theme. The colors and tokens are not accurate
-        because of limitations in monaco editor. The result in vscode can be
-        more granular and slightly different.
-      </p>
+      {!compact && (
+        <p className="text-xs text-center mt-2">
+          * This is a preview of the theme. The colors and tokens are not accurate
+          because of limitations in monaco editor. The result in vscode can be
+          more granular and slightly different.
+        </p>
+      )}
     </section>
   )
 }
