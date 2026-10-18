@@ -10,7 +10,7 @@ Colour pipeline context: `docs/superpowers/specs/2026-10-17-vsc-themegen-color-a
 - [x] M3 — compact Theme Controls
 - [x] M4 — picker module
 - [x] M5 — pared editor preview
-- [ ] M6 — polish, persistence, mobile probe, verification
+- [x] M6 — polish, persistence, mobile probe, verification
 
 One commit per step, each ending with the app runnable and testable in the browser at
 `http://127.0.0.1:3100` (and over the tailnet at `https://vctg.lynsand.tricky.click/`).
@@ -129,10 +129,26 @@ console errors on mount at 390×844. Landed as `probe-mobile.ts` section 1d.
 - Tabler icons: `@tabler/icons-react` is now a dependency (`^3.49.0`, added in M1/M2) and the icons in
   use are imported from it. No inlining needed.
 - Pin/visibility persistence re-confirmed across reload (it landed in M1); theme reset does not clear it.
-- `.tmp_files/pw/probe-mobile.ts` grown to the full assertion list in spec §7.
-- Full evidence run: `bun run build`, `parity.ts --diff`, `phase-b.ts`, `pw/check.ts`,
-  `pw/probe-mobile.ts`.
-- Update the spec doc's §6 open items as they close, and refresh project memory at phase close.
+- `.tmp_files/pw/probe-mobile.ts` grown to the full assertion list in spec §7 — 111 checks, 0 failed at
+  390×844 against the live dev server. Screenshots per milestone: `mobile-m1-*`, `mobile-m2-*`,
+  `mobile-m3-controls`, `mobile-m4-picker`, `mobile-m5-preview`, `mobile-m6-glyphs`.
+- The corner-glyph question (spec §6 open item 4) now has a capture to judge from rather than a
+  description: `mobile-m6-glyphs.png` locks one colour and links another, then selects a third, so the
+  glyphs show on boxes that are *not* the selection. `ColorStrip.tsx` grew a `data-glyphs="link lock"`
+  attribute so the harness asserts the glyph element, not just the `data-locked` flag (11×11px measured).
+- Full evidence run: `bun run build` clean, `tsc --noEmit` clean, `next lint` **clean with no warnings**
+  (the pre-existing `ThemeControls.tsx:46` exhaustive-deps warning went away with the M3 rewrite),
+  `parity.ts --diff` 680 combos / 0 changed / 0 draw mismatches, `phase-b.ts` ALL PASSED,
+  `pw/check.ts` 52/0, `pw/probe-mobile.ts` 111/0.
+- One defect fixed on the way, found by M3's side-by-side button row: `regenerateAnsiColors` went through
+  `commit`, which derives the displayed palette from the bases, so a redraw only replaced the ANSI part of
+  the assignment and the new palette never reached the screen — the button read as dead. Now
+  `commitResolved`. Recorded as colour-architecture spec §5.8.
+- Commits: `aa04747` M1+M2, `a08d944` M3+M5 (one commit because `MobileShell` passes one prop per step and
+  no intermediate file state was worth running — same reason M1+M2 were one).
+- Spec §6 open items updated: item 2 (picker name — source vs target) and item 3 (desktop adoption of the
+  flat language) closed in the doc; item 6 (picker box aspect at phone width) added.
+- Project memory refreshed at phase close.
 
 ## Risks
 

@@ -225,9 +225,11 @@ mobile layout adds.
   hex/picker flush to the pixel, square 12px handle, the label inside the hex field's right half),
   and M5 the pared-preview assertions (compact section, no rail / explorer / menu row / footnote,
   frame under 400px, no line clipped off the right edge, and the title-bar chevron opening a file menu
-  that swaps the Monaco model).
+  that swaps the Monaco model). M6 adds the corner-glyph capture (§6 item 4): a locked and a linked
+  colour are put in the strip, a third is selected, and the glyph elements are asserted by attribute
+  and measured size rather than by the lock flag alone.
 
-## 8. As built (M1–M4)
+## 8. As built (M1–M6)
 
 Where the implementation diverged from the plan above, and why.
 
@@ -270,13 +272,22 @@ the shell passes, so the desktop component is not branched and not duplicated.
 (`mobileSnippets`), not the desktop tour truncated. See §3.7 as built: the point is that every snippet
 fits 390px without clipping mid-token, which is what the desktop lines did.
 
-**M3–M5 evidence** (390×844, against the live dev server):
+**M3–M6 evidence** (390×844, against the live dev server):
 
 | Check | Result |
 | --- | --- |
-| `.tmp_files/pw/probe-mobile.ts` | 106 passed / 0 failed |
+| `.tmp_files/pw/probe-mobile.ts` | 111 passed / 0 failed |
 | `.tmp_files/pw/check.ts` (desktop, 52) | 52 passed / 0 failed |
 | `bun run build` | clean, no lint warnings |
+| `bun run tsc --noEmit` | clean |
+| `bun run lint` | clean, no warnings |
+| `.tmp_files/parity.ts --diff <baseline>` | 680 combos, 0 changed, 0 draw mismatches |
+| `.tmp_files/phase-b.ts` | ALL PASSED |
+
+The corner-glyph question (§6 item 4) has a capture rather than an argument: `mobile-m6-glyphs.png`
+locks one theme colour and links another to a syntax target, then selects a third, so the glyphs are
+visible on boxes that are *not* the selection. `ColorStrip.tsx` carries `data-glyphs="link lock"` so the
+harness asserts the glyph element and its measured size (11×11px), not only the `data-locked` flag.
 
 Measured rather than asserted: saturation radius `0px`, hue radius `0px`, handle `12×12` at `0px`
 radius, saturation `border-bottom` `0px` (the stock black bar), saturation→hue seam `676 → 676`, hex

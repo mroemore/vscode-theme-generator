@@ -230,6 +230,7 @@ const ColorStrip: React.FC<{ domain: StripDomain }> = ({ domain }) => {
               <span style={{ fontSize: 8, lineHeight: 1.15, ...clamp }}>{box.key}</span>
               {(box.linked || box.locked) && (
                 <span
+                  data-glyphs={`${box.linked ? 'link' : ''}${box.locked ? ' lock' : ''}`.trim()}
                   style={{
                     position: 'absolute',
                     bottom: 2,
