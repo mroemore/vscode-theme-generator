@@ -34,6 +34,9 @@ yarn-error.log*
 # local scratch (agent probes, parity harnesses)
 .tmp_files/
 
+# brainstorming mockups (visual companion session output)
+.superpowers/
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts
