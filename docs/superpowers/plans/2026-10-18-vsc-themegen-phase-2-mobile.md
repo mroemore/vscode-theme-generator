@@ -12,6 +12,7 @@ Colour pipeline context: `docs/superpowers/specs/2026-10-17-vsc-themegen-color-a
 - [x] M5 — pared editor preview
 - [x] M6 — polish, persistence, mobile probe, verification
 - [x] M7 — review round: the four open items in spec §6, decided and asserted
+- [x] M8 — picker module, second pass: compact box, size control, output-format dropdown
 
 One commit per step, each ending with the app runnable and testable in the browser at
 `http://127.0.0.1:3100` (and over the tailnet at `https://vctg.lynsand.tricky.click/`).
@@ -181,6 +182,41 @@ they landed before the slider had focus, failing the guard and the three rotatio
 now re-focuses and re-presses once. And the `ColorStrip` cancel listener is mounted for the component's
 whole life (flag set on `pointerdown`, read on the `click` after it) because cancelling re-renders in
 between, so a listener mounted only while placing would be torn down before the click it must swallow.
+
+## M8 — picker module, second pass
+
+The review's picker list, in the order it landed:
+
+1. **The hue strip moves to the top.** The saturation box is the module's first row and the hex row
+   moves below it, so the module reads box → hex → hue. The review's "move the colour strip to the
+   top" meant the hue selection rectangle, not the hex field — that reading was confirmed before any
+   code moved.
+2. **The box is compact by default: 250×160**, about two thirds of a 390px shell, against M7's
+   374×240. The CSS lives in `globals.css` against the picker's scoped class.
+3. **A size control in the title bar, left of the pin**, swaps the compact box for M7's full-width
+   374×240 one and back. It is per-module like the pin, not global, and it is not drawn on the Editor
+   Preview (which has no pin and no size).
+4. **An output-format dropdown** (`hex` / `rgb` / `hsl`) at the right-hand end of the hex row, sharing
+   an edge with the field. It formats the picker's **own value only** — the theme keeps storing hex, so
+   the link layer and the strip's header copy are untouched. `ColorInput.tsx` grew the shared format
+   helpers.
+5. **Both preferences persist** across reloads in `localStorage` (`vsc_themegen.mobile.format`,
+   `vsc_themegen.mobile.pickerLarge`), alongside the pin and visibility keys, through the same
+   `viewState.ts` helper.
+
+Two harness notes:
+
+- **`check.ts` gained section L** — the desktop picker is asserted to keep its stock look (200px wide,
+  rounded saturation/hue corners, no `.flat-picker` markup, no format dropdown, the centred colour
+  title present). Phase 2's flat language is scoped to `.flat-picker`, and section L is what would
+  catch a rule escaping that scope. It runs last: the picker contributes a `[role="slider"]` of its
+  own, which would shift the slider indexes sections B and K use.
+- A throwaway dump harness (`pw/tmp-m8-dump.ts`) measured the live M8 box before the probe's
+  assertions were written against it, rather than the numbers being assumed from the spec.
+
+Evidence: `pw/probe-mobile.ts` 129 → **144 checks, 0 failed**; `pw/check.ts` 52 → **58/0** (+6 from
+section L); `pw/probe-shadow.ts` 10/0; build/tsc/lint clean; `parity.ts --diff` 680/0/0; `phase-b.ts`
+ALL PASSED. Captures: `mobile-m8-picker.png`, `mobile-m8-picker-large.png`.
 
 ## Risks
 

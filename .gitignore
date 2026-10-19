@@ -37,6 +37,9 @@ yarn-error.log*
 # brainstorming mockups (visual companion session output)
 .superpowers/
 
+# magic context tooling state
+.cortexkit/
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts

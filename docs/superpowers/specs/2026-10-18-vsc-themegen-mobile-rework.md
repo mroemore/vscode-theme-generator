@@ -126,25 +126,36 @@ Changes from today:
 Three calls made during review rather than asked, all cheap to flip:
 
 - **(a)** the hex row sits **above** the picker, reading as a header under the module title (today's
-  order is the reverse);
+  order is the reverse). **Superseded in M8**: the hue strip is now the topmost row, with the hex row
+  between it and the box (§3.5 as built).
 - **(b)** the 12px black bar react-colorful draws between saturation and hue is removed — that is the
   most visible "gap" in the stock picker;
 - **(c)** the 24px round grab handle becomes a 12px square outlined handle, matching the hard edges.
   A round handle on a square surface is the one piece that would look wrong either way.
 
-As built (M4), and the one place the drawing was not the spec: the picker goes **full-bleed**, and
-react-colorful's saturation box was square, so at 390px wide it rendered 374×374 — about 44% of an
-844px viewport, more than the mockup suggested. That was the honest reading of "full-bleed instead of
-the fixed 200px block", and it was flagged as open item 6 rather than quietly capped.
+As built (M4): the picker goes **full-bleed**, and react-colorful's saturation box was square, so at
+390px wide it rendered 374×374 — about 44% of an 844px viewport, more than the mockup suggested. That
+was the honest reading of "full-bleed instead of the fixed 200px block", and it was flagged as open
+item 6 rather than quietly capped. M7 capped the height at 240px (§6 item 6).
 
-**Decided in review (open item 6): capped, not square.** `.flat-picker .react-colorful__saturation`
-now sets `height: 240px` instead of `aspect-ratio: 1 / 1`, so the box is 374×240 at 390px — the
-surface is deliberately non-square, and the picker stays thumb-sized instead of pushing the hue slider
-and hex row off the bottom of the screen.
+**M8 — the picker module, second pass (as built).** Two review decisions reshaped it:
+
+- **The saturation box is the topmost row**, and the hex row moves below it, so the module reads
+  box → hex → hue. The review's "move the colour strip to the top" meant the hue selection rectangle,
+  not the hex field; the inversion of M4's order is deliberate.
+- **The box is compact by default: 250×160** (about two thirds of a 390px shell), against M7's
+  374×240. The title bar carries a size control just left of the pin that swaps between the compact
+  box and M7's full-width one; the choice persists (§5).
+
+The hex row now carries an **output-format dropdown** (`hex` / `rgb` / `hsl`) at its right-hand end,
+sharing an edge with the field. It formats the picker's **own value only** — the theme keeps storing
+hex, so the link layer and the strip's header copy are untouched. Choosing a format rewrites the
+field, and typing in the chosen format still funnels through `handleColorChange`.
 
 The flat look is **scoped to a `flat` prop** (`ActiveColorPicker flat`), passed only by
-`MobileShell`; the desktop picker keeps react-colorful's stock rounded look. So §6.3's "does desktop
-adopt the flat language" is now a one-line change — drop the prop — rather than a rewrite.
+`MobileShell`; the desktop picker keeps react-colorful's stock rounded look, which `check.ts` now
+asserts directly (§7). So §6.3's "does desktop adopt the flat language" is now a one-line change —
+drop the prop — rather than a rewrite.
 
 ### 3.6 Compact Theme Controls
 
@@ -202,10 +213,12 @@ These are the Phase 1 contracts, and a layout change has no business touching an
 
 ## 5. Where view state lives
 
-Pin and per-module visibility are **view** state, not theme state: they must not enter `ThemeContext`,
-which owns the colour pipeline and nothing else. They live in the mobile shell component, seeded from
-`localStorage` (`pin` and `visible` keys) with a small read/write helper, and are the only state the
-mobile layout adds.
+Pin, per-module visibility, the picker's value format and the picker box size are **view** state, not
+theme state: they must not enter `ThemeContext`, which owns the colour pipeline and nothing else. They
+live in the mobile shell component, seeded from `localStorage` (`vsc_themegen.mobile.pin`,
+`vsc_themegen.mobile.visible`, `vsc_themegen.mobile.format`, `vsc_themegen.mobile.pickerLarge`) with a
+small read/write helper, and are the only state the mobile layout adds. All four persist across
+reloads.
 
 ## 6. Open items
 
@@ -221,7 +234,16 @@ Decided in review (this round) — each landed in code and in the mobile probe:
 5. ~~Cancel a link by re-pressing its source button?~~ Already true, and now asserted: `startLinking`
    toggles, and the button re-labels itself "Cancel linking from …" while placing. The tap-to-cancel
    rule in §3.4 makes `Escape` no longer the only way out.
-6. ~~Keep the saturation box square?~~ Capped: `height: 240px`, a non-square 374×240 surface (§3.5).
+6. ~~Keep the saturation box square?~~ Capped: `height: 240px`, a non-square 374×240 surface (§3.5) —
+   now the *full* form the M8 size control restores rather than the only shape.
+
+Decided in review (M8) — the picker module's second pass:
+
+7. ~~Picker box size.~~ The compact form is **250×160** (about two thirds of the shell) and the title
+   bar's size control, left of the pin, restores M7's full-width 374×240 box; the choice persists
+   across reloads (§3.5, §5).
+8. ~~What the format dropdown formats.~~ The picker's **own value only**. The theme keeps storing
+   hex, so the link layer and the strip header are unaffected (§3.5).
 
 Still open:
 
@@ -260,6 +282,16 @@ One harness flake fixed in the same round: `check.ts`'s Base Hue section could l
 presses when they landed before the slider had taken focus, and the "did the slider actually move"
 guard then failed the three rotation checks beneath it. It now re-focuses and re-presses once before
 reporting.
+
+M8 adds the picker module's second-pass assertions to the mobile probe: the hue strip is the topmost
+row (its top edge is the module's content top, above the hex row), the compact box measures 250×160,
+the title-bar size control sits left of the pin and swaps the box to 374×240 and back, the format
+dropdown offers `hex` / `rgb` / `hsl` and rewrites the field in the chosen format, and both
+preferences survive a reload. `check.ts` gains a **section L** that pins the *desktop* picker to its
+stock look — 200px wide, rounded saturation/hue corners, no `.flat-picker` markup, no format dropdown,
+the centred colour title still present — so a flat-language rule that escapes `.flat-picker` cannot
+collapse the desktop picker silently. Section L runs last, because the picker contributes a
+`[role="slider"]` of its own and would otherwise shift the slider indexes sections B and K rely on.
 
 ## 8. As built (M1–M6)
 
@@ -383,4 +415,27 @@ component's whole life and refreshes the flag on every tap, with refs carrying t
 Measured, not asserted: saturation box `374×240` (non-square by decision), the preview module at
 `[data-pin]` count 4 rather than 5, and the ignored preview pin gone from
 `localStorage['vsc_themegen.mobile.pin']` after the restore.
+
+**M8 — the picker module's second pass.** The saturation box moved to the top of the module with the
+hex row below it, the box became compact by default (250×160), a size control left of the pin restores
+the full-width box, and the hex row gained an `hex` / `rgb` / `hsl` output-format dropdown scoped to
+the picker's own value. `ColorInput.tsx` grew the shared format helpers; `viewState.ts` grew
+`vsc_themegen.mobile.format` and `vsc_themegen.mobile.pickerLarge`, both persisted like the pin.
+
+| Check | Result |
+| --- | --- |
+| `.tmp_files/pw/probe-mobile.ts` | 144 passed / 0 failed (was 129) |
+| `.tmp_files/pw/check.ts` (desktop, 58) | 58 passed / 0 failed (was 52; +6 from section L) |
+| `.tmp_files/pw/probe-shadow.ts` | 10 passed / 0 failed |
+| `bun run build` / `tsc --noEmit` / `lint` | clean, no warnings |
+| `.tmp_files/parity.ts --diff <baseline>` | 680 combos, 0 changed, 0 draw mismatches |
+| `.tmp_files/phase-b.ts` | ALL PASSED |
+
+Measured, not asserted: the compact saturation box at `250×160`, the size control's position left of
+`[data-pin]`, the format dropdown's three options and its rewrite of the field, and the desktop
+picker's stock geometry (200px wide, `8px 8px 0px 0px` / `0px 0px 8px 8px` corners) with no
+`.flat-picker` markup anywhere on the desktop page.
+
+The M8 captures are `mobile-m8-picker.png` (compact box, hex row below it, dropdown at the field's
+right) and `mobile-m8-picker-large.png` (the size control's full-width state).
 

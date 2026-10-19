@@ -1,7 +1,13 @@
 'use client'
 
 import React, { useState } from 'react'
-import { IconPin, IconPinFilled, IconPinnedOff } from '@tabler/icons-react'
+import {
+  IconMaximize,
+  IconMinimize,
+  IconPin,
+  IconPinFilled,
+  IconPinnedOff,
+} from '@tabler/icons-react'
 
 // One module in the mobile scroll: a title bar (name, count, pin control) over a body.
 // Modules sit flush: no border, no radius, no gap — the only boundary signal is the alternating
@@ -23,6 +29,10 @@ interface ModuleProps {
   onTogglePin: () => void
   /** False for modules that hold no pinned slot (the editor preview). No pin control is drawn. */
   pinnable?: boolean
+  /** A size toggle drawn just left of the pin (the picker's compact vs original form). */
+  expanded?: boolean
+  onToggleExpand?: () => void
+  expandLabel?: string
   /** Module-level actions (the colour panels' bulk lock controls), drawn before the pin. */
   actions?: React.ReactNode
   /** 'up' receives the shadow from the module below; 'down' is a pinned module casting onto the scroller */
@@ -38,6 +48,9 @@ const Module: React.FC<ModuleProps> = ({
   pinned,
   onTogglePin,
   pinnable = true,
+  expanded,
+  onToggleExpand,
+  expandLabel,
   actions,
   cast = 'up',
   fill,
@@ -88,6 +101,30 @@ const Module: React.FC<ModuleProps> = ({
         )}
         <span style={{ flex: 1 }} />
         {actions}
+        {onToggleExpand && (
+          <button
+            type="button"
+            data-expand={moduleId}
+            aria-label={
+              expandLabel ?? (expanded ? `Shrink ${title}` : `Expand ${title}`)
+            }
+            aria-pressed={expanded}
+            onClick={onToggleExpand}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              width: 24,
+              height: 24,
+              border: 'none',
+              background: 'transparent',
+              color: expanded ? ACCENT : '#8E8E96',
+              cursor: 'pointer',
+            }}
+          >
+            {expanded ? <IconMinimize size={15} /> : <IconMaximize size={15} />}
+          </button>
+        )}
         {pinnable && (
           <button
             type="button"

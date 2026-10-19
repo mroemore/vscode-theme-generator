@@ -213,3 +213,47 @@ export function adjustLightness(lightness: number): number {
 export function isHexColor(color: string): boolean {
   return /^#[A-Fa-f0-9]{6}$/.test(color)
 }
+
+// The formats the picker can show a value in (mobile, spec §3.5: a dropdown in the hex row).
+export type ColorFormat = 'hex' | 'rgb' | 'hsl'
+
+export const COLOR_FORMATS: readonly ColorFormat[] = ['hex', 'rgb', 'hsl']
+
+export const isColorFormat = (value: unknown): value is ColorFormat =>
+  typeof value === 'string' && (COLOR_FORMATS as readonly string[]).includes(value)
+
+/** The colour written in the given format, for display and for the picker's own input. */
+export function formatColorValue(color: string, format: ColorFormat): string {
+  try {
+    const parsed = Color(color)
+    if (format === 'rgb') return parsed.rgb().string()
+    if (format === 'hsl') return parsed.hsl().round().string()
+    return parsed.hex().toUpperCase()
+  } catch {
+    return color
+  }
+}
+
+// What a *complete* value of each format looks like. The `color` library happily parses
+// prefixes (`rgb(9`), so the shape has to be checked before a half-typed value is offered to it.
+const FORMAT_SHAPE: Record<ColorFormat, RegExp> = {
+  hex: /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i,
+  rgb: /^rgba?\(\s*\d{1,3}\s*,\s*\d{1,3}\s*,\s*\d{1,3}\s*\)$/i,
+  hsl: /^hsla?\(\s*\d{1,3}\s*,\s*\d{1,3}%\s*,\s*\d{1,3}%\s*\)$/i,
+}
+
+/**
+ * The colour a typed value means, as hex — or null while it is not yet a complete value.
+ * Hex is accepted whatever format the field shows, so pasting hex into an `rgb()` field works.
+ */
+export function parseColorValue(value: string, format: ColorFormat): string | null {
+  const trimmed = value.trim()
+  const complete =
+    FORMAT_SHAPE[format].test(trimmed) || FORMAT_SHAPE.hex.test(trimmed)
+  if (!complete) return null
+  try {
+    return Color(trimmed).hex()
+  } catch {
+    return null
+  }
+}

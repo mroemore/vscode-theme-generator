@@ -3,6 +3,7 @@
 import React, { useEffect, useState } from 'react'
 
 import { useTheme } from '@/contexts/ThemeContext'
+import type { ColorFormat } from '@/lib/utils/colorUtils'
 
 import ActiveColorPicker from '@/components/ActiveColorPicker'
 import ExportButton from '@/components/ExportButton'
@@ -17,8 +18,12 @@ import {
   MODULE_IDS,
   type ModuleId,
   type PinTarget,
+  readStoredFormat,
+  readStoredPickerLarge,
   readStoredPin,
   readStoredVisible,
+  writeStoredFormat,
+  writeStoredPickerLarge,
   writeStoredPin,
   writeStoredVisible,
 } from './viewState'
@@ -51,12 +56,16 @@ const MobileShell: React.FC = () => {
   // read having happened, so a first render never overwrites what is on disk with the defaults.
   const [pin, setPin] = useState<PinTarget | null>(null)
   const [visible, setVisible] = useState<ModuleId[]>([...MODULE_IDS])
+  const [format, setFormat] = useState<ColorFormat>('hex')
+  const [pickerLarge, setPickerLarge] = useState(false)
   const [restored, setRestored] = useState(false)
 
   useEffect(() => {
     const stored = readStoredPin()
     setPin(stored !== null && !NOT_PINNABLE.has(stored) ? stored : null)
     setVisible(readStoredVisible())
+    setFormat(readStoredFormat())
+    setPickerLarge(readStoredPickerLarge())
     setRestored(true)
   }, [])
 
@@ -67,6 +76,14 @@ const MobileShell: React.FC = () => {
   useEffect(() => {
     if (restored) writeStoredVisible(visible)
   }, [visible, restored])
+
+  useEffect(() => {
+    if (restored) writeStoredFormat(format)
+  }, [format, restored])
+
+  useEffect(() => {
+    if (restored) writeStoredPickerLarge(pickerLarge)
+  }, [pickerLarge, restored])
 
   const toggleVisible = (id: ModuleId) => {
     setVisible((current) => {
@@ -120,10 +137,20 @@ const MobileShell: React.FC = () => {
           title="Color Picker"
           pinned={pin === 'picker'}
           onTogglePin={() => togglePin('picker')}
+          expanded={pickerLarge}
+          onToggleExpand={() => setPickerLarge((current) => !current)}
+          expandLabel={
+            pickerLarge ? 'Use the compact picker' : 'Use the full-width picker'
+          }
           fill={fill}
           cast={cast}
         >
-          <ActiveColorPicker flat />
+          <ActiveColorPicker
+            flat
+            format={format}
+            onFormatChange={setFormat}
+            large={pickerLarge}
+          />
         </Module>
       )
     }
