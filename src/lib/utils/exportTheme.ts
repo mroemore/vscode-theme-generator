@@ -5,10 +5,12 @@ import Color from 'color'
 export function generateThemeJSON(
   colors: UIColors,
   syntaxColors: SyntaxColors,
-  ansiColors: AnsiColors
+  ansiColors: AnsiColors,
+  name: string = 'Generated Color Theme',
+  metadata?: object
 ): string {
   const theme = {
-    name: 'Generated Color Theme',
+    name,
     type: Color(colors.BG1).isDark() ? 'dark' : 'light',
     semanticClass: 'theme.rlabs',
     semanticHighlighting: true,
@@ -1824,6 +1826,9 @@ export function generateThemeJSON(
         },
       },
     ],
+    // Present only when the caller supplies metadata, so omitting the parameter keeps
+    // the output byte-identical to the pre-metadata exporter.
+    ...(metadata === undefined ? {} : { 'x-themegen': metadata }),
   }
 
   return JSON.stringify(theme, null, 2)
