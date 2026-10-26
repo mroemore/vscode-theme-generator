@@ -9,6 +9,7 @@ import ActiveColorPicker from '@/components/ActiveColorPicker'
 import ExportButton from '@/components/ExportButton'
 import ExportSemanticButton from '@/components/ExportSemanticButton'
 import ThemeControls from '@/components/ThemeControls'
+import ThemeLibrary from '@/components/ThemeLibrary'
 import ThemePreview from '@/components/ThemePreview'
 
 import BulkLockControls from './BulkLockControls'
@@ -39,6 +40,7 @@ import {
 
 const LABELS: Record<ModuleId, string> = {
   controls: 'Controls',
+  themes: 'Themes',
   colors: 'Colors',
   syntax: 'Syntax',
   ansi: 'ANSI',
@@ -50,7 +52,7 @@ const LABELS: Record<ModuleId, string> = {
 const NOT_PINNABLE: ReadonlySet<PinTarget> = new Set<PinTarget>(['preview'])
 
 const MobileShell: React.FC = () => {
-  const { activeColor } = useTheme()
+  const { activeColor, themes } = useTheme()
 
   // Read stored view state once, then persist changes. The two write effects are gated on the
   // read having happened, so a first render never overwrites what is on disk with the defaults.
@@ -103,6 +105,13 @@ const MobileShell: React.FC = () => {
     { title: string; count?: number; actions?: React.ReactNode; node: React.ReactNode }
   > = {
     controls: { title: 'Theme Controls', node: <ThemeControls compact /> },
+    themes: {
+      title: 'Themes',
+      count: themes.length,
+      // The module title bar already names the panel and carries the count, so the catalogue
+      // drops its own heading here rather than printing "Themes · N" twice.
+      node: <ThemeLibrary compact showHeader={false} />,
+    },
     colors: {
       title: 'Theme Colors',
       count: 16,

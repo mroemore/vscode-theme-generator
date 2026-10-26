@@ -7,6 +7,7 @@ import { isColorFormat, type ColorFormat } from '@/lib/utils/colorUtils'
 
 export const MODULE_IDS = [
   'controls',
+  'themes',
   'colors',
   'syntax',
   'ansi',
@@ -23,8 +24,27 @@ const VISIBLE_KEY = 'vsc_themegen.mobile.visible'
 const FORMAT_KEY = 'vsc_themegen.mobile.format'
 const PICKER_LARGE_KEY = 'vsc_themegen.mobile.pickerLarge'
 
+/** 1 = a bare array of visible ids (written before the Themes module existed); 2 = `{ v, ids }`. */
+const VISIBLE_VERSION = 2
+
+/** Modules that did not exist in the v1 record. A v1 record cannot name them as hidden — they
+ *  were not in the bar yet — so they come back visible instead of vanishing for anyone who ever
+ *  toggled a module in an older build. New ids go in here when they are introduced. */
+const MODULES_ADDED_AFTER_V1: ReadonlySet<ModuleId> = new Set<ModuleId>(['themes'])
+
+interface StoredVisible {
+  v: number
+  ids: ModuleId[]
+}
+
 const isModuleId = (value: unknown): value is ModuleId =>
   typeof value === 'string' && (MODULE_IDS as readonly string[]).includes(value)
+
+const isStoredVisible = (value: unknown): value is StoredVisible => {
+  if (typeof value !== 'object' || value === null) return false
+  const record = value as { v?: unknown; ids?: unknown }
+  return record.v === VISIBLE_VERSION && Array.isArray(record.ids)
+}
 
 export function readStoredPin(): PinTarget | null {
   try {
@@ -51,9 +71,19 @@ export function readStoredVisible(): ModuleId[] {
     const raw = window.localStorage.getItem(VISIBLE_KEY)
     if (!raw) return [...MODULE_IDS]
     const parsed: unknown = JSON.parse(raw)
-    if (!Array.isArray(parsed)) return [...MODULE_IDS]
-    const kept = MODULE_IDS.filter((id) => parsed.includes(id))
-    return kept
+    // v1: a bare array. Kept readable, with the later modules folded in — see
+    // MODULES_ADDED_AFTER_V1.
+    if (Array.isArray(parsed)) {
+      return MODULE_IDS.filter(
+        (id) => parsed.includes(id) || MODULES_ADDED_AFTER_V1.has(id)
+      )
+    }
+    // Current form: the list is exhaustive, so a module missing from it was hidden by the user.
+    if (isStoredVisible(parsed)) {
+      return MODULE_IDS.filter((id) => parsed.ids.includes(id))
+    }
+    // A form this build does not know (a newer version): fall back to every module shown.
+    return [...MODULE_IDS]
   } catch {
     return [...MODULE_IDS]
   }
@@ -61,7 +91,8 @@ export function readStoredVisible(): ModuleId[] {
 
 export function writeStoredVisible(visible: ModuleId[]): void {
   try {
-    window.localStorage.setItem(VISIBLE_KEY, JSON.stringify(visible))
+    const record: StoredVisible = { v: VISIBLE_VERSION, ids: visible }
+    window.localStorage.setItem(VISIBLE_KEY, JSON.stringify(record))
   } catch {
     // as above
   }

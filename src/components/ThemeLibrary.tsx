@@ -30,6 +30,12 @@ interface ThemeLibraryProps {
    * is spent on the name and the swatches. The actions are icon-only in both layouts.
    */
   compact?: boolean
+  /**
+   * Draw the panel's own "Themes · N" heading. False under a MobileShell module, whose title
+   * bar already names the module and carries the count — two headings would say it twice. The
+   * New/Import row stays in both cases, so New is still reachable in the mobile body.
+   */
+  showHeader?: boolean
 }
 
 /** Relative age for a catalogue row. `updatedAt` is a save timestamp, not a creation one. */
@@ -105,7 +111,7 @@ const CheckIcon = () => (
 const iconButtonClass =
   'flex h-5 w-5 items-center justify-center rounded hover:opacity-70 focus-visible:outline focus-visible:outline-1'
 
-const ThemeLibrary: React.FC<ThemeLibraryProps> = ({ compact = false }) => {
+const ThemeLibrary: React.FC<ThemeLibraryProps> = ({ compact = false, showHeader = true }) => {
   const {
     themes,
     themeId,
@@ -199,11 +205,13 @@ const ThemeLibrary: React.FC<ThemeLibraryProps> = ({ compact = false }) => {
       style={{ backgroundColor: colors.BG1, color: colors.FG1 }}
     >
       <div className="mb-3 flex items-center justify-between gap-2">
-        <h2 className="text-xl font-semibold">
-          Themes ·{' '}
-          <span data-testid="theme-count">{themes.length}</span>
-        </h2>
-        <div className="flex gap-1">
+        {showHeader && (
+          <h2 className="text-xl font-semibold">
+            Themes ·{' '}
+            <span data-testid="theme-count">{themes.length}</span>
+          </h2>
+        )}
+        <div className="ml-auto flex gap-1">
           <Button
             size="sm"
             data-testid="theme-new"
