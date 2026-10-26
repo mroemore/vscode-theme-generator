@@ -91,6 +91,13 @@ function safeGet(store: Resolved, key: string): string | null {
 
 type SetResult = 'ok' | 'quota'
 
+/**
+ * The index can also be *locked*: the key exists but its bytes are not this version's
+ * library (a newer `schemaVersion`, or unparseable). A newer library is read-only — see
+ * `writeIndex` — so "locked" is a refusal, never a success.
+ */
+export type IndexWriteResult = SetResult | 'locked'
+
 /** Write one key, reporting quota exhaustion (or any write failure) as `'quota'`. */
 function safeSet(store: Resolved, key: string, value: string): SetResult {
   if (store === null || store === undefined) return 'quota'
@@ -128,37 +135,73 @@ export function emptyIndex(): LibraryIndex {
 }
 
 /**
- * Read the library index. A missing, corrupt, or unreadable index degrades to the
- * empty index — the catalogue simply shows "No saved themes yet" — rather than
- * throwing. `order` is filtered to strings so a hand-edited index cannot inject a
- * non-string id into the catalogue.
+ * The index as the store actually holds it:
+ *
+ *   * `'empty'`  — no key yet: this version may create the library;
+ *   * `'ok'`     — this version's index, parsed;
+ *   * `'locked'` — a key exists that is not this version's index (a newer app's library,
+ *                  or bytes that do not parse). Read-only: see `writeIndex`.
  */
-export function readIndex(store: Resolved = browserStore()): LibraryIndex {
+export type IndexRead =
+  | { state: 'ok'; index: LibraryIndex }
+  | { state: 'empty' }
+  | { state: 'locked' }
+
+/**
+ * Read the index *and* report whether it is ours. Callers that only want a catalogue can
+ * use `readIndex` (empty for both), but a mutating caller must distinguish "no library"
+ * from "a library I must not overwrite" — the whole point of the `'locked'` state.
+ */
+export function readIndexState(store: Resolved = browserStore()): IndexRead {
   const raw = safeGet(store, LIBRARY_KEY)
-  if (raw === null) return emptyIndex()
+  if (raw === null) return { state: 'empty' }
+  let parsed: unknown
   try {
-    const parsed: unknown = JSON.parse(raw)
-    if (typeof parsed !== 'object' || parsed === null) return emptyIndex()
-    const rec = parsed as { schemaVersion?: unknown; currentId?: unknown; order?: unknown }
-    // A newer index (a future app version's library) is not loaded: reading it into
-    // this version's shape would then let a write clobber it. Degrade to empty.
-    if (rec.schemaVersion !== 1) return emptyIndex()
-    const order = Array.isArray(rec.order)
-      ? rec.order.filter((id): id is string => typeof id === 'string')
-      : []
-    const currentId = typeof rec.currentId === 'string' ? rec.currentId : null
-    return {
+    parsed = JSON.parse(raw)
+  } catch {
+    return { state: 'locked' }
+  }
+  if (typeof parsed !== 'object' || parsed === null) return { state: 'locked' }
+  const rec = parsed as { schemaVersion?: unknown; currentId?: unknown; order?: unknown }
+  // A newer index (a future app version's library) is not ours to rewrite. Refuse rather
+  // than degrade: `writeIndex` would otherwise replace it with `{schemaVersion: 1,
+  // order: [new]}` and orphan every palette record under its own key (Review Focus 3).
+  if (rec.schemaVersion !== 1) return { state: 'locked' }
+  const order = Array.isArray(rec.order)
+    ? rec.order.filter((id): id is string => typeof id === 'string')
+    : []
+  const currentId = typeof rec.currentId === 'string' ? rec.currentId : null
+  return {
+    state: 'ok',
+    index: {
       schemaVersion: 1,
       currentId: currentId !== null && order.includes(currentId) ? currentId : null,
       order,
-    }
-  } catch {
-    return emptyIndex()
+    },
   }
 }
 
-export function writeIndex(index: LibraryIndex, store: Resolved = browserStore()): void {
-  safeSet(store, LIBRARY_KEY, JSON.stringify(index))
+/**
+ * Read the library index. A missing, locked, or unreadable index degrades to the empty
+ * index — the catalogue simply shows "No saved themes yet" — rather than throwing.
+ * `order` is filtered to strings so a hand-edited index cannot inject a non-string id.
+ * Mutating callers use `readIndexState` so a locked library is not mistaken for empty.
+ */
+export function readIndex(store: Resolved = browserStore()): LibraryIndex {
+  const state = readIndexState(store)
+  return state.state === 'ok' ? state.index : emptyIndex()
+}
+
+/**
+ * Write the index. Refuses (`'locked'`) when the key holds a library this version cannot
+ * read: a newer library is read-only, never clobbered.
+ */
+export function writeIndex(
+  index: LibraryIndex,
+  store: Resolved = browserStore()
+): IndexWriteResult {
+  if (readIndexState(store).state === 'locked') return 'locked'
+  return safeSet(store, LIBRARY_KEY, JSON.stringify(index))
 }
 
 // ---------------------------------------------------------------------------

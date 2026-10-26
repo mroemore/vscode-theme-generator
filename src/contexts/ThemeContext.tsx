@@ -252,6 +252,8 @@ export const ThemeProvider: React.FC<{
     flush,
     loadCurrent,
     readRecord,
+    refreshCatalogue,
+    hasOpenRecord,
     adoptCurrent,
     writeCurrentId,
     createRecord,
@@ -603,7 +605,12 @@ export const ThemeProvider: React.FC<{
     (id: string) => {
       flush()
       const record = readRecord(id)
-      if (record === null) return
+      if (record === null) {
+        // The row named bytes that no longer parse (or vanished). Drop it from the
+        // catalogue instead of leaving a row that can never be opened.
+        refreshCatalogue()
+        return
+      }
       const open = openRecord(record)
       adoptOpenTheme(open)
       // Without this, next-themes re-commits the system-resolved mode a tick later and
@@ -617,6 +624,7 @@ export const ThemeProvider: React.FC<{
     [
       flush,
       readRecord,
+      refreshCatalogue,
       adoptOpenTheme,
       setTheme,
       adoptCurrent,
@@ -632,12 +640,30 @@ export const ThemeProvider: React.FC<{
    */
   const newTheme = useCallback(() => {
     flush()
+    const before = stateRef.current as ThemeState
+    // Read from the ref, not `themeId`: `deleteTheme` clears the open record earlier in
+    // this same tick, before React has re-rendered.
+    const hadRecord = hasOpenRecord()
     commitResolved((s) => bootstrap(s.isDark, randomSeed()), undefined, {
       record: false,
       save: false,
     })
-    createRecord(stateRef.current as ThemeState)
-  }, [flush, commitResolved, createRecord])
+    if (createRecord(stateRef.current as ThemeState) !== null) return
+
+    // The write was refused — quota, or a library from a newer version — so nothing was
+    // stored and no record is open. The outgoing record must not stay "current": its id
+    // still names a saved palette, and the next debounce would rewrite that key with this
+    // new palette (a silent corruption, since a same-key rewrite of similar size fits).
+    if (hadRecord) {
+      // The outgoing palette is still on disk under its own record; put it back so the
+      // screen does not show a theme that was never saved.
+      stateRef.current = before
+      setVersion((v) => v + 1)
+    }
+    // Clears the identity, drops any queued save, and leaves the app running unsaved:
+    // `scheduleSave` no-ops while there is no id.
+    adoptCurrent(null)
+  }, [flush, commitResolved, createRecord, hasOpenRecord, adoptCurrent])
 
   /** Rename one record. The catalogue's display disambiguation is not stored. */
   const renameTheme = useCallback(

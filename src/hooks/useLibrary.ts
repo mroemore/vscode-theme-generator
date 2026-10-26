@@ -31,8 +31,10 @@ import { toRecord } from '@/lib/themes/record'
 import type { ThemeStateLike } from '@/lib/themes/record'
 import {
   browserStore,
+  emptyIndex,
   readAllThemes,
   readIndex,
+  readIndexState,
   readTheme,
   removeTheme as removeStoredTheme,
   writeIndex,
@@ -55,6 +57,9 @@ export interface ThemeSummary {
 export const SAVE_DEBOUNCE_MS = 400
 
 const EMPTY_LIBRARY_MESSAGE = 'Storage full — delete a theme or clear history'
+
+/** A newer app version's library: readable by it alone, so this version must not write. */
+const READ_ONLY_MESSAGE = 'This library was saved by a newer version — read only'
 
 /** The resolver's input view of a live state snapshot. Mirrors `ThemeContext.toInputs`. */
 function inputsOf(s: ThemeStateLike): ThemeInputs {
@@ -157,6 +162,10 @@ export interface LibraryController {
   /** Read the library after mount; returns the record `currentId` points at, if any. */
   loadCurrent: () => SavedTheme | null
   readRecord: (id: string) => SavedTheme | null
+  /** Re-read the catalogue; a caller that saw unreadable bytes uses this to drop the row. */
+  refreshCatalogue: () => void
+  /** Whether a record is open. Reads the ref, so it is correct inside a batched handler. */
+  hasOpenRecord: () => boolean
   /** Make `record` the open one in local state only; `writeCurrentId` persists it. */
   adoptCurrent: (record: { id: string; name: string; createdAt: number } | null) => void
   /** Persist `currentId`, keeping the index's `order` untouched. */
@@ -268,13 +277,22 @@ export function useLibrary(): LibraryController {
     return readTheme(id, browserStore())
   }, [])
 
+  const refreshCatalogue = useCallback(() => {
+    publish(browserStore())
+  }, [publish])
+
+  const hasOpenRecord = useCallback(() => currentRef.current !== null, [])
+
   const adoptCurrent = useCallback(
     (record: { id: string; name: string; createdAt: number } | null) => {
+      // With no record open there is nothing a queued save may write to: drop it rather
+      // than let a timer from a since-deleted record fire against a new palette.
+      if (record === null) cancelPending()
       currentRef.current = record
       setThemeId(record?.id ?? null)
       setThemeName(record?.name ?? 'Theme 1')
     },
-    []
+    [cancelPending]
   )
 
   const writeCurrentId = useCallback((id: string | null) => {
@@ -292,7 +310,14 @@ export function useLibrary(): LibraryController {
       cancelPending()
 
       const store = browserStore()
-      const index = readIndex(store)
+      // Check *before* writing the record: under a locked (newer) index the appended id
+      // would never reach `order`, leaving an orphan record nobody can see or delete.
+      const indexState = readIndexState(store)
+      if (indexState.state === 'locked') {
+        setLastError(READ_ONLY_MESSAGE)
+        return null
+      }
+      const index = indexState.state === 'ok' ? indexState.index : emptyIndex()
       const records = readAllThemes(index, store)
       const id = newId()
       const now = Date.now()
@@ -308,7 +333,13 @@ export function useLibrary(): LibraryController {
         currentId: id,
         order: [...index.order, id],
       }
-      writeIndex(next, store)
+      if (writeIndex(next, store) !== 'ok') {
+        // The record was written but the catalogue cannot name it. Undo the record so the
+        // library does not accumulate entries no index points at.
+        removeStoredTheme(id, store)
+        setLastError(EMPTY_LIBRARY_MESSAGE)
+        return null
+      }
       adoptCurrent({ id, name: record.name, createdAt: now })
       setThemes(readAllThemes(next, store).map(summaryOf))
       setLastError(null)
@@ -346,7 +377,14 @@ export function useLibrary(): LibraryController {
   const deleteRecord = useCallback(
     (id: string): { wasCurrent: boolean; nextId: string | null } => {
       const store = browserStore()
-      const index = readIndex(store)
+      // Deleting a record means rewriting the index that names it. Under a locked (newer)
+      // library that write is refused, so removing the record would leave a dangling id.
+      const indexState = readIndexState(store)
+      if (indexState.state === 'locked') {
+        setLastError(READ_ONLY_MESSAGE)
+        return { wasCurrent: false, nextId: null }
+      }
+      const index = indexState.state === 'ok' ? indexState.index : emptyIndex()
       const order = index.order.filter((entry) => entry !== id)
       const wasCurrent = index.currentId === id || currentRef.current?.id === id
 
@@ -385,6 +423,8 @@ export function useLibrary(): LibraryController {
     flush,
     loadCurrent,
     readRecord,
+    refreshCatalogue,
+    hasOpenRecord,
     adoptCurrent,
     writeCurrentId,
     createRecord,

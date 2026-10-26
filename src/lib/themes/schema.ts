@@ -10,10 +10,11 @@ import {
 } from '@/lib/types/colors'
 import type { AnsiColors, SyntaxColors, UIColors } from '@/lib/types/colors'
 
-// The stored record for one saved theme (spec §1.1). `palette` is what the user saw,
-// displayed and post-link; `purePalette` is what the generator produced with no hand
-// edits — the pair is what lets a reopen adopt generator fixes without discarding
-// hand-edited colours. `inputs` is absent for a foreign (palette-only) import.
+// The stored record for one saved theme (spec §1.1). `palette` is the pre-link (base)
+// palette as edited — links are applied only for display, never stored — and
+// `purePalette` is what the generator produced with no hand edits; the pair is what lets
+// a reopen adopt generator fixes without discarding hand-edited colours. `inputs` is
+// absent for a foreign (palette-only) import.
 
 export const SCHEMA_VERSION = 1
 
