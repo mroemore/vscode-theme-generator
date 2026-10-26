@@ -22,7 +22,7 @@
 // reference-equality fast path keeps the common case cheap.
 
 import type { Assignment } from '@/lib/colors/assignment'
-import type { Links } from '@/lib/colors/links'
+import type { Link, Links } from '@/lib/colors/links'
 import type { AnsiColors, ColorScheme, SyntaxColors, UIColors } from '@/lib/types/colors'
 
 /** The slice of `ThemeState` a patch covers (design §4.1). */
@@ -98,6 +98,20 @@ function deepEqual(a: unknown, b: unknown): boolean {
     if (!deepEqual(left[key], right[key])) return false
   }
   return true
+}
+
+/**
+ * Structural copy of a JSON-clean value. Used where a value taken out of a patch is put
+ * into a returned state: the patch belongs to a *stored step*, so a later in-place edit
+ * through the state must not be able to rewrite history.
+ */
+function deepCopy<T>(value: T): T {
+  if (Array.isArray(value)) return value.map((item) => deepCopy(item)) as unknown as T
+  if (value === null || typeof value !== 'object') return value
+  const source = value as Record<string, unknown>
+  const copy: Record<string, unknown> = {}
+  for (const key of Object.keys(source)) copy[key] = deepCopy(source[key])
+  return copy as T
 }
 
 /** One entry per changed key of a colour record; fixed-size records, but be tolerant. */
@@ -191,11 +205,38 @@ export function diffThemes(
   return { at, entries }
 }
 
+/**
+ * The entries of a patch that came back from persistence, or `[]` when the step is not
+ * shaped like a patch at all.
+ *
+ * `readHistory` only guarantees that `steps` is an array (a hand-edited or
+ * future-version step can be anything), and the storage layer's promise is that a corrupt
+ * history behaves like an empty one. Nothing here may throw out of a render.
+ */
+function patchEntries(patch: unknown): PatchEntry[] {
+  if (typeof patch !== 'object' || patch === null) return []
+  const entries = (patch as { entries?: unknown }).entries
+  if (!Array.isArray(entries)) return []
+  return entries.filter(
+    (entry): entry is PatchEntry =>
+      typeof entry === 'object' &&
+      entry !== null &&
+      typeof (entry as PatchEntry).path === 'string'
+  )
+}
+
+/** A step's timestamp, or `0` when it is corrupt. */
+function patchAt(patch: unknown): number {
+  const at =
+    typeof patch === 'object' && patch !== null ? (patch as { at?: unknown }).at : undefined
+  return typeof at === 'number' && Number.isFinite(at) ? at : 0
+}
+
 /** The same patch backwards. `at` is kept so an undo keeps its place in time. */
 export function invertPatch(patch: ThemePatch): ThemePatch {
   return {
-    at: patch.at,
-    entries: patch.entries.map((entry) => ({
+    at: patchAt(patch),
+    entries: patchEntries(patch).map((entry) => ({
       path: entry.path,
       before: entry.after,
       after: entry.before,
@@ -224,7 +265,7 @@ export function applyPatch<T extends PatchableState>(state: T, patch: ThemePatch
   let links: Links | null = null
   let locks: Set<string> | null = null
 
-  for (const { path, after } of patch.entries) {
+  for (const { path, after } of patchEntries(patch)) {
     const dot = path.indexOf('.')
 
     if (dot < 0) {
@@ -245,7 +286,11 @@ export function applyPatch<T extends PatchableState>(state: T, patch: ThemePatch
           next.scheme = after as ColorScheme
           break
         case 'assignment':
-          next.assignment = after as Assignment
+          // Copied, not aliased: the value belongs to a stored step and a later in-place
+          // edit of the returned state must not rewrite the history.
+          if (typeof after === 'object' && after !== null) {
+            next.assignment = deepCopy(after as Assignment)
+          }
           break
         default:
           // A path this version does not know (written by a newer one): ignore rather
@@ -277,7 +322,8 @@ export function applyPatch<T extends PatchableState>(state: T, patch: ThemePatch
       case 'links': {
         if (links === null) links = { ...state.links }
         if (after === null) delete links[key]
-        else links[key] = after as Links[string]
+        else if (typeof after === 'object') links[key] = { ...(after as Link) }
+        // A malformed value is ignored and the link stays as it was, like an unknown path.
         break
       }
       case 'locks': {
@@ -317,8 +363,8 @@ function clampCursor(history: History): number {
 }
 
 /** Every path a patch touches — the unit of the coalescing rule (§4.2). */
-function pathSet(patch: ThemePatch): Set<string> {
-  return new Set(patch.entries.map((entry) => entry.path))
+function pathSet(entries: readonly PatchEntry[]): Set<string> {
+  return new Set(entries.map((entry) => entry.path))
 }
 
 function isSubset(of: Set<string>, superset: Set<string>): boolean {
@@ -328,17 +374,26 @@ function isSubset(of: Set<string>, superset: Set<string>): boolean {
 
 /**
  * Merge `next` into `prev`: the earlier `before` values survive, the later `after` values
- * win. Only called when `next`'s paths are a subset of `prev`'s, so no path is added.
+ * win, and every entry the merge leaves net-unchanged is dropped. Only called when
+ * `next`'s paths are a subset of `prev`'s, so no path is added.
+ *
+ * The filter is what makes an out-and-back inside the 500 ms window free: `347 → 350 →
+ * 347` merges to `{before: 347, after: 347}`, an entry whose undo can do nothing visible.
+ * The comparison is structural because `assignment` and link values are objects.
  */
 function mergeInto(prev: ThemePatch, next: ThemePatch): ThemePatch {
+  const prevEntries = patchEntries(prev)
   const index = new Map<string, number>()
-  prev.entries.forEach((entry, i) => index.set(entry.path, i))
-  const entries = prev.entries.map((entry) => ({ ...entry }))
-  for (const entry of next.entries) {
+  prevEntries.forEach((entry, i) => index.set(entry.path, i))
+  const entries = prevEntries.map((entry) => ({ ...entry }))
+  for (const entry of patchEntries(next)) {
     const i = index.get(entry.path)
     if (i !== undefined) entries[i].after = entry.after
   }
-  return { at: next.at, entries }
+  return {
+    at: patchAt(next),
+    entries: entries.filter((entry) => !deepEqual(entry.before, entry.after)),
+  }
 }
 
 /**
@@ -347,25 +402,35 @@ function mergeInto(prev: ThemePatch, next: ThemePatch): ThemePatch {
  *  * an empty patch is not an edit — it is dropped, so a no-op commit cannot push a step;
  *  * a new edit while `cursor < steps.length` truncates the redo tail;
  *  * a patch whose path set is a subset of the previous step's, arriving within 500 ms,
- *    merges into it (keyboard repeat, a programmatic burst);
+ *    merges into it (keyboard repeat, a programmatic burst); a merge that leaves the
+ *    step with no net change drops the step itself — it never happened;
  *  * the oldest step is dropped past `HISTORY_CAP`.
  */
 export function recordStep(history: History, patch: ThemePatch): History {
-  if (patch.entries.length === 0) return history
+  const entries = patchEntries(patch)
+  if (entries.length === 0) return history
 
   const cursor = clampCursor(history)
   const steps = history.steps.slice(0, cursor)
 
   const prev = steps[steps.length - 1]
+  const prevPaths = prev === undefined ? new Set<string>() : pathSet(patchEntries(prev))
   const canMerge =
     prev !== undefined &&
-    prev.entries.length > 0 &&
-    patch.at - prev.at >= 0 &&
-    patch.at - prev.at <= COALESCE_WINDOW_MS &&
-    isSubset(pathSet(patch), pathSet(prev))
+    prevPaths.size > 0 &&
+    patchAt(patch) - patchAt(prev) >= 0 &&
+    patchAt(patch) - patchAt(prev) <= COALESCE_WINDOW_MS &&
+    isSubset(pathSet(entries), prevPaths)
 
   if (canMerge) {
-    steps[steps.length - 1] = mergeInto(prev, patch)
+    const merged = mergeInto(prev, patch)
+    if (merged.entries.length === 0) {
+      // The window closed on a net no-op, so the step it merged into never happened:
+      // drop it rather than leave an undo slot that does nothing visible.
+      steps.pop()
+      return { cursor: steps.length, steps }
+    }
+    steps[steps.length - 1] = merged
     return { cursor: steps.length, steps }
   }
 
