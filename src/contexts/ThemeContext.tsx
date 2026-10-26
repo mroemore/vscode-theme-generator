@@ -16,6 +16,9 @@ import {
 } from '@/lib/utils/syntaxColors'
 import { resolveAnsiColors } from '@/lib/utils/ansiColors'
 import { pickLocked, relinkPalette, resolvePalette } from '@/lib/themes/resolve'
+import { openRecord } from '@/lib/themes/record'
+import { useLibrary } from '@/hooks/useLibrary'
+import type { ThemeSummary } from '@/hooks/useLibrary'
 import type { ThemeInputs, ThemePalette } from '@/lib/themes/schema'
 import { ColorScheme } from '@/lib/types/colors'
 import { drawTheme, redrawAnsi } from '@/lib/colors/assignment'
@@ -74,6 +77,8 @@ interface ThemeContextType {
   uiSaturation: number
   syntaxSaturation: number
   scheme: ColorScheme
+  /** The open theme's inputs, for the export metadata block. */
+  inputs: ThemeInputs
   poolMode: PoolMode
   seed: number
   colors: UIColors
@@ -105,7 +110,31 @@ interface ThemeContextType {
   unlinkTarget: (target: LinkTargetId) => void
   setLinkAdjust: (target: LinkTargetId, adjust: boolean) => void
   setHoveredSource: (source: UIKey | null) => void
+  /** The open record's id, or null before the library has been read / when it is empty. */
+  themeId: string | null
+  themeName: string
+  lastSavedAt: number | null
+  /** A non-fatal storage condition (currently quota exhaustion), cleared by the next save. */
+  lastError: string | null
+  /** False until the index has been read after mount; the catalogue renders a skeleton. */
+  libraryLoaded: boolean
+  themes: ThemeSummary[]
+  openTheme: (id: string) => void
+  newTheme: () => void
+  renameTheme: (id: string, name: string) => void
+  deleteTheme: (id: string) => void
 }
+
+/** What a commit may do besides mutating the state. Both default to on. */
+interface CommitOptions {
+  /** Record a history step. Wired in Task 12; accepted now so call sites do not churn. */
+  record?: boolean
+  /** Schedule the debounced auto-save. */
+  save?: boolean
+}
+
+/** The merged shape `openRecord` returns, named here so adoption can take it as an argument. */
+type OpenedTheme = ReturnType<typeof openRecord>
 
 const SCHEMES = Object.values(ColorScheme).filter(
   (value) => typeof value === 'number'
@@ -212,6 +241,23 @@ export const ThemeProvider: React.FC<{
   userId?: string
 }> = ({ children }) => {
   const { setTheme, resolvedTheme } = useNextTheme()
+  const {
+    libraryLoaded,
+    themes,
+    themeId,
+    themeName,
+    lastSavedAt,
+    lastError,
+    scheduleSave,
+    flush,
+    loadCurrent,
+    readRecord,
+    adoptCurrent,
+    writeCurrentId,
+    createRecord,
+    renameRecord,
+    deleteRecord,
+  } = useLibrary()
 
   const [activeColor, setActiveColor] = useState<string | null>(null)
   const [linkingSource, setLinkingSource] = useState<UIKey | null>(null)
@@ -225,10 +271,19 @@ export const ThemeProvider: React.FC<{
     stateRef.current = bootstrap(resolvedTheme !== 'light', BOOTSTRAP_SEED)
   }
 
-  const commit = useCallback((mutate: (s: ThemeState) => ThemeState) => {
-    stateRef.current = relink(mutate(stateRef.current as ThemeState))
-    setVersion((v) => v + 1)
-  }, [])
+  const commit = useCallback(
+    (mutate: (s: ThemeState) => ThemeState, opts: CommitOptions = {}) => {
+      const before = stateRef.current as ThemeState
+      const after = relink(mutate(before))
+      stateRef.current = after
+      setVersion((v) => v + 1)
+      // The save is the *only* writer of a record; it no-ops until the library is read,
+      // so this cannot overwrite a saved theme with the bootstrap palette.
+      if (opts.save !== false) scheduleSave(after)
+      // history wiring lands in Task 12 (opts.record)
+    },
+    [scheduleSave]
+  )
 
   /**
    * Re-resolve every base from a mutated snapshot and adopt the result. `carryIn` names
@@ -238,35 +293,97 @@ export const ThemeProvider: React.FC<{
   const commitResolved = useCallback(
     (
       mutate: (s: ThemeState) => ThemeState,
-      carryIn?: (next: ThemeState) => ReadonlySet<string>
+      carryIn?: (next: ThemeState) => ReadonlySet<string>,
+      opts?: CommitOptions
     ) =>
       commit((s) => {
         const next = mutate(s)
         return resolveAll(next, carryIn ? carryIn(next) : next.lockedColors)
-      }),
+      }, opts),
     [commit]
   )
 
-  // The first render was deterministic so the server and client agree. Now that we are
-  // definitely in the browser, draw a fresh random theme — every visit still starts
-  // somewhere new, and Randomize remains the way to ask for another.
-  const bootstrapped = useRef(false)
-  useEffect(() => {
-    if (bootstrapped.current) return
-    bootstrapped.current = true
-    commitResolved((s) => bootstrap(s.isDark, randomSeed()))
-  }, [commitResolved])
+  /**
+   * Adopt a record's merged state. A plain write rather than `commitResolved`: the merge
+   * in `openRecord` already resolved every untouched key, so resolving again would drop
+   * exactly the hand edits it was built to keep. Not recorded (the adoption is one step,
+   * not an edit) and not saved — the caller decides whether an adopted record needs the
+   * one write that lets generator fixes reach it.
+   */
+  const adoptOpenTheme = useCallback((open: OpenedTheme) => {
+    const live = stateRef.current as ThemeState
+    const inputs = open.inputs
+    const base: ThemeState = {
+      ...live,
+      // A foreign (palette-only) record has no inputs; its palette is adopted verbatim.
+      ...(inputs === undefined
+        ? {}
+        : {
+            isDark: inputs.isDark,
+            baseHue: inputs.baseHue,
+            uiSaturation: inputs.uiSaturation,
+            syntaxSaturation: inputs.syntaxSaturation,
+            scheme: inputs.scheme,
+            assignment: inputs.assignment,
+          }),
+      colors: open.palette.ui,
+      baseSyntaxColors: open.palette.syntax,
+      baseAnsiColors: open.palette.ansi,
+      syntaxColors: open.palette.syntax,
+      ansiColors: open.palette.ansi,
+      links: open.links,
+      lockedColors: new Set(open.locks),
+    }
+    stateRef.current = relink(base)
+    setVersion((v) => v + 1)
+  }, [])
 
-  // Adopt the mode next-themes actually resolved, once it knows. The bootstrap above
-  // has to guess; this corrects it without touching the assignment, so the palette
-  // merely re-ranges rather than being re-dealt.
+  // Adopt the mode next-themes actually resolved, once it knows. The bootstrap above has
+  // to guess; this corrects it without touching the assignment, so the palette merely
+  // re-ranges rather than being re-dealt. Declared before the library effect on purpose:
+  // an adopted record's mode must be the last word on mount, not corrected a tick later.
   useEffect(() => {
     if (!resolvedTheme) return
     const dark = resolvedTheme === 'dark'
     if (dark !== (stateRef.current as ThemeState).isDark) {
-      commitResolved((s) => ({ ...s, isDark: dark }))
+      commitResolved((s) => ({ ...s, isDark: dark }), undefined, { record: false })
     }
   }, [resolvedTheme, commitResolved])
+
+  // The first render was deterministic so the server and client agree. Now that we are
+  // definitely in the browser, the library — not a random seed — decides what to show:
+  // adopt the record `currentId` points at, or draw a fresh theme and create `Theme 1`.
+  // Either way the first paint above kept the bootstrap palette and touched no storage.
+  const libraryBootstrapped = useRef(false)
+  useEffect(() => {
+    if (libraryBootstrapped.current) return
+    libraryBootstrapped.current = true
+
+    const record = loadCurrent()
+    if (record !== null) {
+      const open = openRecord(record)
+      adoptOpenTheme(open)
+      if (open.inputs !== undefined) setTheme(open.inputs.isDark ? 'dark' : 'light')
+      adoptCurrent({ id: record.id, name: record.name, createdAt: record.createdAt })
+      writeCurrentId(record.id)
+      // Saved once: `openRecord` lets generator fixes reach untouched keys, and that is a
+      // new palette for the same record.
+      scheduleSave(stateRef.current as ThemeState)
+      return
+    }
+
+    commitResolved((s) => bootstrap(s.isDark, randomSeed()), undefined, { record: false })
+    createRecord(stateRef.current as ThemeState)
+  }, [
+    loadCurrent,
+    adoptOpenTheme,
+    setTheme,
+    adoptCurrent,
+    writeCurrentId,
+    scheduleSave,
+    commitResolved,
+    createRecord,
+  ])
 
   // Escape cancels link placement, so the mode is always escapable without moving focus.
   useEffect(() => {
@@ -477,6 +594,74 @@ export const ThemeProvider: React.FC<{
       return { ...s, links }
     })
 
+  // ── Library operations ──────────────────────────────────────────────────────
+  // Each one flushes the debounce first: a pending save carries the outgoing record's
+  // id, and letting it fire after the switch would write this palette into that record.
+
+  /** Switch to a stored record. Flushes, adopts, tells next-themes the record's mode. */
+  const openTheme = useCallback(
+    (id: string) => {
+      flush()
+      const record = readRecord(id)
+      if (record === null) return
+      const open = openRecord(record)
+      adoptOpenTheme(open)
+      // Without this, next-themes re-commits the system-resolved mode a tick later and
+      // the adopted light/dark choice is immediately undone.
+      if (open.inputs !== undefined) setTheme(open.inputs.isDark ? 'dark' : 'light')
+      adoptCurrent({ id: record.id, name: record.name, createdAt: record.createdAt })
+      writeCurrentId(record.id)
+      // One write so the reopened (possibly re-resolved) palette is what reloads next.
+      scheduleSave(stateRef.current as ThemeState)
+    },
+    [
+      flush,
+      readRecord,
+      adoptOpenTheme,
+      setTheme,
+      adoptCurrent,
+      writeCurrentId,
+      scheduleSave,
+    ]
+  )
+
+  /**
+   * A brand-new theme. Reuses the bootstrap funnel so the mode is carried the same way a
+   * first visit carries it, then persists that state as a new record (never through
+   * `commit`'s save, which would target the outgoing id).
+   */
+  const newTheme = useCallback(() => {
+    flush()
+    commitResolved((s) => bootstrap(s.isDark, randomSeed()), undefined, {
+      record: false,
+      save: false,
+    })
+    createRecord(stateRef.current as ThemeState)
+  }, [flush, commitResolved, createRecord])
+
+  /** Rename one record. The catalogue's display disambiguation is not stored. */
+  const renameTheme = useCallback(
+    (id: string, name: string) => {
+      // Fold any queued edit in first, so a debounce still carrying the old name cannot
+      // land on top of the rename.
+      flush()
+      renameRecord(id, name)
+    },
+    [flush, renameRecord]
+  )
+
+  /** Delete a record + history. Deleting the open one opens the next, or creates Theme 1. */
+  const deleteTheme = useCallback(
+    (id: string) => {
+      flush()
+      const { wasCurrent, nextId } = deleteRecord(id)
+      if (!wasCurrent) return
+      if (nextId !== null) openTheme(nextId)
+      else newTheme()
+    },
+    [flush, deleteRecord, openTheme, newTheme]
+  )
+
   const s = stateRef.current as ThemeState
 
   // Derived, so a panel does not have to scan the link table on every render.
@@ -490,6 +675,7 @@ export const ThemeProvider: React.FC<{
     uiSaturation: s.uiSaturation,
     syntaxSaturation: s.syntaxSaturation,
     scheme: s.scheme,
+    inputs: toInputs(s),
     poolMode: s.assignment.poolMode,
     seed: s.assignment.seed,
     colors: s.colors,
@@ -519,6 +705,16 @@ export const ThemeProvider: React.FC<{
     unlinkTarget,
     setLinkAdjust,
     setHoveredSource,
+    themeId,
+    themeName,
+    lastSavedAt,
+    lastError,
+    libraryLoaded,
+    themes,
+    openTheme,
+    newTheme,
+    renameTheme,
+    deleteTheme,
   }
 
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>

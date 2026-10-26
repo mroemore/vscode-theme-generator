@@ -1,19 +1,27 @@
 import React from 'react'
 import { useTheme } from '@/contexts/ThemeContext'
 import { generateThemeJSON } from '@/lib/utils/exportTheme'
+import { exportFileName, metadataFor } from '@/lib/themes/exporter'
 
 import { Button } from '@/components/ui/button'
 
 const ExportButton: React.FC = () => {
-  const { colors, syntaxColors, ansiColors } = useTheme()
+  const { colors, syntaxColors, ansiColors, themeName, inputs, lockedColors, links } =
+    useTheme()
 
   const exportTheme = () => {
-    const themeJSON = generateThemeJSON(colors, syntaxColors, ansiColors)
+    const themeJSON = generateThemeJSON(
+      colors,
+      syntaxColors,
+      ansiColors,
+      themeName,
+      metadataFor(inputs, lockedColors, links)
+    )
     const blob = new Blob([themeJSON], { type: 'application/json' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = 'Generated-color-theme.json'
+    a.download = exportFileName(themeName)
     a.click()
     URL.revokeObjectURL(url)
   }

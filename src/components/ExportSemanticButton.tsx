@@ -1,24 +1,27 @@
 import React from 'react'
 import { useTheme } from '@/contexts/ThemeContext'
 import { generateSemanticThemeJSON } from '@/lib/utils/export'
+import { exportFileName, metadataFor } from '@/lib/themes/exporter'
 
 import { Button } from '@/components/ui/button'
 
 const ExportSemanticButton: React.FC = () => {
-  const { colors, syntaxColors, ansiColors } = useTheme()
+  const { colors, syntaxColors, ansiColors, themeName, inputs, lockedColors, links } =
+    useTheme()
 
   const exportSemanticTheme = () => {
-    const { themeJSON, themeObject } = generateSemanticThemeJSON(
-      'Generated Color Theme',
+    const { themeJSON } = generateSemanticThemeJSON(
+      themeName,
       colors,
       syntaxColors,
-      ansiColors
+      ansiColors,
+      metadataFor(inputs, lockedColors, links)
     )
     const blob = new Blob([themeJSON], { type: 'application/json' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = 'Generated-color-theme.json'
+    a.download = exportFileName(themeName)
     a.click()
     URL.revokeObjectURL(url)
   }
