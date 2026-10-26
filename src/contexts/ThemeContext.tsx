@@ -17,6 +17,8 @@ import {
 import { resolveAnsiColors } from '@/lib/utils/ansiColors'
 import { pickLocked, relinkPalette, resolvePalette } from '@/lib/themes/resolve'
 import { openRecord } from '@/lib/themes/record'
+import { parseImport, parseImportAsNew } from '@/lib/themes/importer'
+import type { ImportResult } from '@/lib/themes/importer'
 import { useLibrary } from '@/hooks/useLibrary'
 import type { ThemeSummary } from '@/hooks/useLibrary'
 import type { SavedTheme, ThemeInputs, ThemePalette } from '@/lib/themes/schema'
@@ -127,6 +129,12 @@ interface ThemeContextType {
   readTheme: (id: string) => SavedTheme | null
   openTheme: (id: string) => void
   newTheme: () => void
+  /**
+   * Read a theme file and add it to the library. `duplicate` comes back with the record
+   * already saved, so the caller can offer "open" or "import as new"; `asNew` skips that
+   * check and always creates a row. Never enters undo history — an import is not an edit.
+   */
+  importFile: (file: File, options?: { asNew?: boolean }) => Promise<ImportResult>
   renameTheme: (id: string, name: string) => void
   deleteTheme: (id: string) => void
 }
@@ -263,6 +271,7 @@ export const ThemeProvider: React.FC<{
     adoptCurrent,
     writeCurrentId,
     createRecord,
+    addRecord,
     renameRecord,
     deleteRecord,
   } = useLibrary()
@@ -606,9 +615,14 @@ export const ThemeProvider: React.FC<{
   // Each one flushes the debounce first: a pending save carries the outgoing record's
   // id, and letting it fire after the switch would write this palette into that record.
 
-  /** Switch to a stored record. Flushes, adopts, tells next-themes the record's mode. */
+  /**
+   * Switch to a stored record. Flushes, adopts, tells next-themes the record's mode.
+   * `save: false` skips the closing write — import uses it because the record it just
+   * wrote is already exactly what a reopen would produce, and a palette-only record must
+   * not be rewritten with inputs it does not have.
+   */
   const openTheme = useCallback(
-    (id: string) => {
+    (id: string, options: { save?: boolean } = {}) => {
       flush()
       const record = readRecord(id)
       if (record === null) {
@@ -625,7 +639,7 @@ export const ThemeProvider: React.FC<{
       adoptCurrent({ id: record.id, name: record.name, createdAt: record.createdAt })
       writeCurrentId(record.id)
       // One write so the reopened (possibly re-resolved) palette is what reloads next.
-      scheduleSave(stateRef.current as ThemeState)
+      if (options.save !== false) scheduleSave(stateRef.current as ThemeState)
     },
     [
       flush,
@@ -670,6 +684,52 @@ export const ThemeProvider: React.FC<{
     // `scheduleSave` no-ops while there is no id.
     adoptCurrent(null)
   }, [flush, commitResolved, createRecord, hasOpenRecord, adoptCurrent])
+
+  /**
+   * Read a theme file and add it as a new record. The file's text is read here rather
+   * than by the caller so the panel never holds a half-parsed blob; the duplicate case
+   * hands back the record that already exists, and the caller offers its two actions.
+   *
+   * Not an edit: nothing enters undo history, and the imported record is written once,
+   * already resolved, then adopted without a second save.
+   */
+  const importFile = useCallback(
+    async (file: File, options: { asNew?: boolean } = {}): Promise<ImportResult> => {
+      // Fold a queued edit in first: the duplicate check hashes what is stored, so a save
+      // still sitting in the debounce would otherwise be compared against stale bytes.
+      flush()
+
+      let text: string
+      try {
+        text = await file.text()
+      } catch {
+        return { kind: 'invalid', reason: 'That file could not be read.' }
+      }
+
+      const existing = themes
+        .map((summary) => readRecord(summary.id))
+        .filter((record): record is SavedTheme => record !== null)
+      // Unmapped colours in a foreign file come from the theme the user is looking at,
+      // not from a neutral invented here (spec §6.2).
+      const fallback = toPalette(stateRef.current as ThemeState)
+
+      const result = options.asNew
+        ? await parseImportAsNew(file.name, text, existing, fallback)
+        : await parseImport(file.name, text, existing, fallback)
+      if (result.kind !== 'theme') return result
+
+      const id = addRecord(result.record)
+      if (id === null) {
+        return {
+          kind: 'invalid',
+          reason: 'The library refused the imported theme — storage full or read-only.',
+        }
+      }
+      openTheme(id, { save: false })
+      return result
+    },
+    [flush, themes, readRecord, addRecord, openTheme]
+  )
 
   /** Rename one record. The catalogue's display disambiguation is not stored. */
   const renameTheme = useCallback(
@@ -746,6 +806,7 @@ export const ThemeProvider: React.FC<{
     readTheme: readRecord,
     openTheme,
     newTheme,
+    importFile,
     renameTheme,
     deleteTheme,
   }

@@ -136,6 +136,7 @@ const ThemeLibrary: React.FC<ThemeLibraryProps> = ({ compact = false }) => {
     lastError,
     colors,
     newTheme,
+    importFile,
     openTheme,
     renameTheme,
     deleteTheme,
@@ -151,6 +152,41 @@ const ThemeLibrary: React.FC<ThemeLibraryProps> = ({ compact = false }) => {
 
   /** The row whose ✕ was pressed and is asking for its one confirmation. */
   const [confirmingId, setConfirmingId] = useState<string | null>(null)
+
+  // Import. The file is kept, not just its parse: "Import as new" re-reads the same bytes
+  // without asking for the file again, and the input's value is cleared on every pick so
+  // choosing the same file twice still fires `change` (a stale File would be invisible).
+  const fileRef = useRef<HTMLInputElement>(null)
+  const [duplicate, setDuplicate] = useState<{
+    file: File
+    id: string
+    name: string
+  } | null>(null)
+  const [importError, setImportError] = useState<string | null>(null)
+
+  const runImport = async (file: File, asNew = false) => {
+    setImportError(null)
+    const result = await importFile(file, { asNew })
+    if (result.kind === 'theme') {
+      setDuplicate(null)
+      return
+    }
+    if (result.kind === 'invalid') {
+      setDuplicate(null)
+      setImportError(result.reason)
+      return
+    }
+    setDuplicate({ file, id: result.existing.id, name: result.existing.name })
+  }
+
+  const pickFile = () => {
+    setImportError(null)
+    if (fileRef.current === null) return
+    // Cleared *before* the picker opens: a repeat import of the same file must produce a
+    // change event, and a cancelled picker must not leave yesterday's file armed.
+    fileRef.current.value = ''
+    fileRef.current.click()
+  }
 
   const listRef = useRef<HTMLDivElement>(null)
 
@@ -243,9 +279,9 @@ const ThemeLibrary: React.FC<ThemeLibraryProps> = ({ compact = false }) => {
       {compact ? (
         // New and Import as one flat strip: the shell's borderless 24 px icon controls, joined
         // by the bottom bar's 2 px separator and sitting at the body's top edge. New is the
-        // accent because it is the action; Import is disabled (Task 10) and greys out in the
-        // shell's disabled tone. Keeping them here rather than in a heading means New stays one
-        // tap away without a second title.
+        // accent because it is the action; Import is the quiet secondary beside it. Keeping
+        // them here rather than in a heading means New stays one tap away without a second
+        // title.
         <div className="mb-2 flex justify-end" data-testid="theme-actions">
           <button
             type="button"
@@ -265,9 +301,9 @@ const ThemeLibrary: React.FC<ThemeLibraryProps> = ({ compact = false }) => {
             type="button"
             data-testid="theme-import"
             aria-label="Import theme"
-            title="Import a theme file (import arrives in a later step)"
-            disabled
-            style={{ ...flatIconButtonStyle, color: '#5A5A62', cursor: 'default' }}
+            title="Import a theme file"
+            onClick={pickFile}
+            style={{ ...flatIconButtonStyle, color: colors.FG2 }}
           >
             <IconFileImport size={15} />
           </button>
@@ -293,13 +329,81 @@ const ThemeLibrary: React.FC<ThemeLibraryProps> = ({ compact = false }) => {
               variant="secondary"
               data-testid="theme-import"
               aria-label="Import theme"
-              title="Import a theme file (import arrives in a later step)"
-              disabled
+              title="Import a theme file"
+              onClick={pickFile}
             >
               Import
             </Button>
           </div>
         </div>
+      )}
+
+      {/* One input for both layouts. Hidden rather than in a label: the two Import controls
+          are different shapes, and a `<label>` could only dress one of them. */}
+      <input
+        ref={fileRef}
+        type="file"
+        data-testid="theme-import-input"
+        accept=".json,.jsonc,application/json"
+        className="hidden"
+        onChange={(event) => {
+          const file = event.target.files?.[0] ?? null
+          // Cleared now, so the next pick of the same file is a new `change` event.
+          event.target.value = ''
+          if (file !== null) void runImport(file)
+        }}
+      />
+
+      {/* The duplicate dialog is inline, not a modal (spec §6.3): the catalogue stays
+          readable behind it, nothing is unmounted, and the chosen file is still in state
+          for the second action. */}
+      {duplicate !== null && (
+        <div
+          data-testid="theme-duplicate"
+          role="group"
+          aria-label="Theme already in library"
+          className="mb-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs"
+          style={{ color: colors.FG2 }}
+        >
+          <span>
+            <span style={{ color: colors.FG1, fontWeight: 600 }}>{duplicate.name}</span> is
+            already in your library.
+          </span>
+          <button
+            type="button"
+            data-testid="theme-duplicate-open"
+            title={`Open ${duplicate.name}`}
+            className="underline"
+            style={{ color: colors.AC1 }}
+            onClick={() => {
+              const { id } = duplicate
+              setDuplicate(null)
+              openTheme(id)
+            }}
+          >
+            Open existing
+          </button>
+          <button
+            type="button"
+            data-testid="theme-duplicate-new"
+            title="Add the file as a second theme"
+            className="underline"
+            style={{ color: colors.AC1 }}
+            onClick={() => void runImport(duplicate.file, true)}
+          >
+            Import as new
+          </button>
+        </div>
+      )}
+
+      {importError !== null && (
+        <p
+          data-testid="theme-import-error"
+          className="mb-2 text-xs"
+          style={{ color: colors.ERROR }}
+        >
+          {importError}
+        </p>
       )}
 
       {lastError !== null && (
@@ -450,6 +554,7 @@ const ThemeLibrary: React.FC<ThemeLibraryProps> = ({ compact = false }) => {
 
                 {!compact && !renaming && (
                   <span
+                    data-testid="theme-row-meta"
                     className="flex-shrink-0 whitespace-nowrap text-[10px] tabular-nums"
                     style={{ color: colors.FG2 }}
                   >

@@ -172,6 +172,11 @@ export interface LibraryController {
   writeCurrentId: (id: string | null) => void
   /** Persist a state as a brand-new record and make it current. Returns its id, or null. */
   createRecord: (state: ThemeStateLike, name?: string) => string | null
+  /**
+   * Persist a record that was built elsewhere — import is the only such caller — and make
+   * it current. Returns its id, or null when the library refused the write.
+   */
+  addRecord: (record: SavedTheme) => string | null
   /** Rename one stored record; never the catalogue's display disambiguation. */
   renameRecord: (id: string, name: string) => boolean
   /** Remove a record and its history, repairing `currentId`/`order`. */
@@ -349,6 +354,45 @@ export function useLibrary(): LibraryController {
     [adoptCurrent, cancelPending]
   )
 
+  const addRecord = useCallback(
+    (record: SavedTheme): string | null => {
+      // The record is already built; what is left is the same bookkeeping `createRecord`
+      // does — refuse under a locked index, roll back an orphan, adopt, publish.
+      cancelPending()
+      const store = browserStore()
+      const indexState = readIndexState(store)
+      if (indexState.state === 'locked') {
+        setLastError(READ_ONLY_MESSAGE)
+        return null
+      }
+      const index = indexState.state === 'ok' ? indexState.index : emptyIndex()
+      // A record whose id the index already names is not a new row; refuse rather than
+      // overwrite whatever is stored under it.
+      if (index.order.includes(record.id)) return null
+
+      if (writeTheme(record, store) === 'quota') {
+        setLastError(EMPTY_LIBRARY_MESSAGE)
+        return null
+      }
+      const next: LibraryIndex = {
+        ...index,
+        currentId: record.id,
+        order: [...index.order, record.id],
+      }
+      if (writeIndex(next, store) !== 'ok') {
+        removeStoredTheme(record.id, store)
+        setLastError(EMPTY_LIBRARY_MESSAGE)
+        return null
+      }
+      adoptCurrent({ id: record.id, name: record.name, createdAt: record.createdAt })
+      setThemes(readAllThemes(next, store).map(summaryOf))
+      setLastError(null)
+      setLastSavedAt(record.updatedAt)
+      return record.id
+    },
+    [adoptCurrent, cancelPending]
+  )
+
   const renameRecord = useCallback((id: string, name: string): boolean => {
     const trimmed = name.trim()
     if (trimmed === '') return false
@@ -428,6 +472,7 @@ export function useLibrary(): LibraryController {
     adoptCurrent,
     writeCurrentId,
     createRecord,
+    addRecord,
     renameRecord,
     deleteRecord,
   }
