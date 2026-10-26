@@ -52,7 +52,7 @@ const LABELS: Record<ModuleId, string> = {
 const NOT_PINNABLE: ReadonlySet<PinTarget> = new Set<PinTarget>(['preview'])
 
 const MobileShell: React.FC = () => {
-  const { activeColor, themes } = useTheme()
+  const { activeColor, themes, libraryLoaded } = useTheme()
 
   // Read stored view state once, then persist changes. The two write effects are gated on the
   // read having happened, so a first render never overwrites what is on disk with the defaults.
@@ -107,10 +107,12 @@ const MobileShell: React.FC = () => {
     controls: { title: 'Theme Controls', node: <ThemeControls compact /> },
     themes: {
       title: 'Themes',
-      count: themes.length,
+      // No count until the library has been read: `themes` is [] before the read, so an
+      // ungated count paints "Themes 0" for a frame and then corrects itself.
+      count: libraryLoaded ? themes.length : undefined,
       // The module title bar already names the panel and carries the count, so the catalogue
-      // drops its own heading here rather than printing "Themes · N" twice.
-      node: <ThemeLibrary compact showHeader={false} />,
+      // draws no heading of its own in the compact layout.
+      node: <ThemeLibrary compact />,
     },
     colors: {
       title: 'Theme Colors',

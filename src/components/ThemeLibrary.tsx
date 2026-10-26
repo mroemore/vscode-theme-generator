@@ -1,6 +1,7 @@
 'use client'
 
 import React, { useEffect, useRef, useState } from 'react'
+import { IconFileImport, IconPlus } from '@tabler/icons-react'
 
 import { useTheme } from '@/contexts/ThemeContext'
 import { exportFileName, metadataFor } from '@/lib/themes/exporter'
@@ -28,14 +29,14 @@ interface ThemeLibraryProps {
   /**
    * The mobile layout (spec §8.2): 48 px rows and no relative-age column, so 390 px of width
    * is spent on the name and the swatches. The actions are icon-only in both layouts.
+   *
+   * `compact` is also the whole flat-language switch. A module in the mobile shell draws no
+   * border, no radius and no shadow, and its fill is the alternating module fill — so the body
+   * must not re-draw a card of its own (see `ThemeControls` compact for the same rule). The
+   * heading is keyed off `compact` too, the way `ThemeControls` does it, so a compact caller
+   * cannot end up with two titles.
    */
   compact?: boolean
-  /**
-   * Draw the panel's own "Themes · N" heading. False under a MobileShell module, whose title
-   * bar already names the module and carries the count — two headings would say it twice. The
-   * New/Import row stays in both cases, so New is still reachable in the mobile body.
-   */
-  showHeader?: boolean
 }
 
 /** Relative age for a catalogue row. `updatedAt` is a save timestamp, not a creation one. */
@@ -111,7 +112,23 @@ const CheckIcon = () => (
 const iconButtonClass =
   'flex h-5 w-5 items-center justify-center rounded hover:opacity-70 focus-visible:outline focus-visible:outline-1'
 
-const ThemeLibrary: React.FC<ThemeLibraryProps> = ({ compact = false, showHeader = true }) => {
+// The shell's icon-control idiom, borrowed from Module/ColorStrip: 24 px, borderless, square,
+// transparent until it carries a state. Kept as a style object rather than classes so `compact`
+// never inherits the desktop button chrome.
+const flatIconButtonStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  width: 24,
+  height: 24,
+  padding: 0,
+  border: 'none',
+  borderRadius: 0,
+  background: 'transparent',
+  cursor: 'pointer',
+}
+
+const ThemeLibrary: React.FC<ThemeLibraryProps> = ({ compact = false }) => {
   const {
     themes,
     themeId,
@@ -147,13 +164,30 @@ const ThemeLibrary: React.FC<ThemeLibraryProps> = ({ compact = false, showHeader
   }, [themeId, themes.length])
 
   const rowHeight = compact ? 48 : 36
-  const listStyle: React.CSSProperties = {
-    // A fixed box, not a max-height alone: the skeleton and a one-row list are then the same
-    // height, so the panel does not resize when the library arrives (design §8.3).
-    minHeight: rowHeight * 3 + 4,
-    maxHeight: rowHeight * 6 + 10,
-    overflowY: 'auto',
-  }
+  // Desktop keeps the fixed box: the skeleton and a one-row list are then the same height, so
+  // the panel does not resize when the library arrives (design §8.3). Compact does not: a
+  // fixed max height there is a scroller nested in the page scroller, with dead space under a
+  // short list — the module grows and the page is the only thing that scrolls.
+  const listStyle: React.CSSProperties = compact
+    ? { display: 'flex', flexDirection: 'column', gap: 8 }
+    : {
+        minHeight: rowHeight * 3 + 4,
+        maxHeight: rowHeight * 6 + 10,
+        overflowY: 'auto',
+      }
+
+  // A row is a flat band in compact: no radius, no box of its own, no inset beyond the module's
+  // own 8 px. The current row's fill is the only boundary the list draws.
+  const rowClass = compact
+    ? 'flex flex-shrink-0 items-center gap-1.5'
+    : 'flex flex-shrink-0 items-center gap-1.5 rounded-md px-1'
+
+  // Row controls are the shell's 24 px icon buttons in compact, the existing 20 px ones on
+  // desktop (whose appearance must not change).
+  const iconButton = (color: string) =>
+    compact
+      ? { className: 'flex-shrink-0', style: { ...flatIconButtonStyle, color } }
+      : { className: iconButtonClass, style: { color } }
 
   const startRename = (theme: ThemeSummary) => {
     setConfirmingId(null)
@@ -201,38 +235,72 @@ const ThemeLibrary: React.FC<ThemeLibraryProps> = ({ compact = false, showHeader
     <div
       data-testid="theme-library"
       data-compact={compact ? 'true' : 'false'}
-      className="w-full rounded-lg border border-border p-4 shadow-md"
-      style={{ backgroundColor: colors.BG1, color: colors.FG1 }}
+      className={
+        compact ? 'w-full' : 'w-full rounded-lg border border-border p-4 shadow-md'
+      }
+      style={compact ? { color: colors.FG1 } : { backgroundColor: colors.BG1, color: colors.FG1 }}
     >
-      <div className="mb-3 flex items-center justify-between gap-2">
-        {showHeader && (
-          <h2 className="text-xl font-semibold">
-            Themes ·{' '}
-            <span data-testid="theme-count">{themes.length}</span>
-          </h2>
-        )}
-        <div className="ml-auto flex gap-1">
-          <Button
-            size="sm"
+      {compact ? (
+        // New and Import as one flat strip: the shell's borderless 24 px icon controls, joined
+        // by the bottom bar's 2 px separator and sitting at the body's top edge. New is the
+        // accent because it is the action; Import is disabled (Task 10) and greys out in the
+        // shell's disabled tone. Keeping them here rather than in a heading means New stays one
+        // tap away without a second title.
+        <div className="mb-2 flex justify-end" data-testid="theme-actions">
+          <button
+            type="button"
             data-testid="theme-new"
             aria-label="New theme"
             title="New theme"
             onClick={() => newTheme()}
+            style={{
+              ...flatIconButtonStyle,
+              borderRight: `2px solid ${colors.BORDER}`,
+              color: colors.AC1,
+            }}
           >
-            New
-          </Button>
-          <Button
-            size="sm"
-            variant="secondary"
+            <IconPlus size={15} />
+          </button>
+          <button
+            type="button"
             data-testid="theme-import"
             aria-label="Import theme"
             title="Import a theme file (import arrives in a later step)"
             disabled
+            style={{ ...flatIconButtonStyle, color: '#5A5A62', cursor: 'default' }}
           >
-            Import
-          </Button>
+            <IconFileImport size={15} />
+          </button>
         </div>
-      </div>
+      ) : (
+        <div className="mb-3 flex items-center justify-between gap-2">
+          <h2 className="text-xl font-semibold">
+            Themes ·{' '}
+            <span data-testid="theme-count">{themes.length}</span>
+          </h2>
+          <div className="ml-auto flex gap-1">
+            <Button
+              size="sm"
+              data-testid="theme-new"
+              aria-label="New theme"
+              title="New theme"
+              onClick={() => newTheme()}
+            >
+              New
+            </Button>
+            <Button
+              size="sm"
+              variant="secondary"
+              data-testid="theme-import"
+              aria-label="Import theme"
+              title="Import a theme file (import arrives in a later step)"
+              disabled
+            >
+              Import
+            </Button>
+          </div>
+        </div>
+      )}
 
       {lastError !== null && (
         <p
@@ -247,17 +315,22 @@ const ThemeLibrary: React.FC<ThemeLibraryProps> = ({ compact = false, showHeader
       <div
         data-testid="theme-list"
         ref={listRef}
-        className="flex flex-col gap-0.5"
+        className={compact ? 'flex flex-col' : 'flex flex-col gap-0.5'}
         style={listStyle}
       >
         {!libraryLoaded ? (
-          <div data-testid="theme-skeleton" className="flex flex-col gap-0.5">
+          <div
+            data-testid="theme-skeleton"
+            className={compact ? 'flex flex-col gap-2' : 'flex flex-col gap-0.5'}
+          >
             {/* Three rows at the real row height: the panel keeps its size when the list
                 replaces them, and the placeholder never says "no themes". */}
             {[0, 1, 2].map((i) => (
               <div
                 key={i}
-                className="flex items-center gap-2 rounded-md px-2"
+                className={
+                  compact ? 'flex items-center gap-2' : 'flex items-center gap-2 rounded-md px-2'
+                }
                 style={{ height: rowHeight, backgroundColor: colors.BG2 }}
               >
                 <span
@@ -274,7 +347,7 @@ const ThemeLibrary: React.FC<ThemeLibraryProps> = ({ compact = false, showHeader
         ) : themes.length === 0 ? (
           <p
             data-testid="theme-empty"
-            className="px-2 py-6 text-sm"
+            className={compact ? 'py-6 text-sm' : 'px-2 py-6 text-sm'}
             style={{ color: colors.FG2 }}
           >
             No saved themes yet — press New to start one.
@@ -290,7 +363,7 @@ const ThemeLibrary: React.FC<ThemeLibraryProps> = ({ compact = false, showHeader
                 data-testid="theme-row"
                 data-theme-id={theme.id}
                 data-current={current ? 'true' : 'false'}
-                className="flex flex-shrink-0 items-center gap-1.5 rounded-md px-1"
+                className={rowClass}
                 style={{
                   height: rowHeight,
                   backgroundColor: current ? colors.BG2 : 'transparent',
@@ -303,7 +376,9 @@ const ThemeLibrary: React.FC<ThemeLibraryProps> = ({ compact = false, showHeader
                   <span
                     data-testid="theme-row-current"
                     aria-hidden
-                    className="h-5 w-1 flex-shrink-0 rounded-full"
+                    className={
+                      compact ? 'h-5 w-1 flex-shrink-0' : 'h-5 w-1 flex-shrink-0 rounded-full'
+                    }
                     style={{ backgroundColor: colors.AC1 }}
                   />
                 ) : (
@@ -314,7 +389,11 @@ const ThemeLibrary: React.FC<ThemeLibraryProps> = ({ compact = false, showHeader
                   <input
                     data-testid="theme-rename-input"
                     aria-label={`Rename ${theme.name}`}
-                    className="min-w-0 flex-1 rounded border bg-transparent px-1 text-sm"
+                    className={
+                      compact
+                        ? 'min-w-0 flex-1 border-0 border-b bg-transparent px-0 text-sm'
+                        : 'min-w-0 flex-1 rounded border bg-transparent px-1 text-sm'
+                    }
                     style={{ borderColor: colors.AC1, color: colors.FG1 }}
                     value={draft}
                     autoFocus
@@ -357,8 +436,9 @@ const ThemeLibrary: React.FC<ThemeLibraryProps> = ({ compact = false, showHeader
                         <span
                           key={`${theme.id}-${index}`}
                           data-testid="theme-swatch"
-                          className="h-3 w-3 rounded-[2px]"
+                          className="h-3 w-3"
                           style={{
+                            borderRadius: compact ? 0 : 2,
                             backgroundColor: swatch,
                             boxShadow: `inset 0 0 0 1px ${colors.BORDER}`,
                           }}
@@ -391,8 +471,7 @@ const ThemeLibrary: React.FC<ThemeLibraryProps> = ({ compact = false, showHeader
                       data-testid="theme-delete-yes"
                       aria-label={`Confirm delete ${theme.name}`}
                       title={`Confirm delete ${theme.name}`}
-                      className={iconButtonClass}
-                      style={{ color: colors.ERROR }}
+                      {...iconButton(colors.ERROR)}
                       onClick={() => {
                         setConfirmingId(null)
                         deleteTheme(theme.id)
@@ -405,8 +484,7 @@ const ThemeLibrary: React.FC<ThemeLibraryProps> = ({ compact = false, showHeader
                       data-testid="theme-delete-no"
                       aria-label={`Cancel delete ${theme.name}`}
                       title={`Cancel delete ${theme.name}`}
-                      className={iconButtonClass}
-                      style={{ color: colors.FG2 }}
+                      {...iconButton(colors.FG2)}
                       onClick={() => setConfirmingId(null)}
                     >
                       <CancelIcon />
@@ -422,8 +500,7 @@ const ThemeLibrary: React.FC<ThemeLibraryProps> = ({ compact = false, showHeader
                       data-testid="theme-export"
                       aria-label={`Export ${theme.name}`}
                       title={`Export ${theme.name}`}
-                      className={iconButtonClass}
-                      style={{ color: colors.FG2 }}
+                      {...iconButton(colors.FG2)}
                       onClick={() => exportRow(theme)}
                     >
                       <ExportIcon />
@@ -433,8 +510,7 @@ const ThemeLibrary: React.FC<ThemeLibraryProps> = ({ compact = false, showHeader
                       data-testid="theme-rename"
                       aria-label={`Rename ${theme.name}`}
                       title={`Rename ${theme.name}`}
-                      className={iconButtonClass}
-                      style={{ color: colors.FG2 }}
+                      {...iconButton(colors.FG2)}
                       onClick={() => startRename(theme)}
                     >
                       <RenameIcon />
@@ -444,8 +520,7 @@ const ThemeLibrary: React.FC<ThemeLibraryProps> = ({ compact = false, showHeader
                       data-testid="theme-delete"
                       aria-label={`Delete ${theme.name}`}
                       title={`Delete ${theme.name}`}
-                      className={iconButtonClass}
-                      style={{ color: colors.FG2 }}
+                      {...iconButton(colors.FG2)}
                       onClick={() => setConfirmingId(theme.id)}
                     >
                       <DeleteIcon />
