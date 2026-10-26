@@ -7,7 +7,6 @@ import React, {
   useCallback,
 } from 'react'
 import {
-  resolveUiColors,
   buildPools,
   updateThemeColorsWithSaturation,
 } from '@/lib/utils/uiColors'
@@ -16,12 +15,13 @@ import {
   updateSyntaxColorsWithSaturation,
 } from '@/lib/utils/syntaxColors'
 import { resolveAnsiColors } from '@/lib/utils/ansiColors'
+import { pickLocked, relinkPalette, resolvePalette } from '@/lib/themes/resolve'
+import type { ThemeInputs, ThemePalette } from '@/lib/themes/schema'
 import { ColorScheme } from '@/lib/types/colors'
 import { drawTheme, redrawAnsi } from '@/lib/colors/assignment'
 import type { Assignment, PoolMode } from '@/lib/colors/assignment'
 import type { UIKey } from '@/lib/colors/ui'
 import {
-  applyLinks,
   dropLink,
   isAnsiTarget,
   targetKey,
@@ -111,21 +111,7 @@ const SCHEMES = Object.values(ColorScheme).filter(
   (value) => typeof value === 'number'
 ) as ColorScheme[]
 
-/** The locked subset of a colour record — what a resolve must carry through untouched. */
-function pickLocked(
-  source: Record<string, string>,
-  locked: ReadonlySet<string>
-): Record<string, string> {
-  const out: Record<string, string> = {}
-  for (const key of locked) {
-    const value = source[key]
-    if (value !== undefined) out[key] = value
-  }
-  return out
-}
-
-/**
- * The carry set for an *unlock*: the locks, plus every other key in the same panel. The
+/** The carry set for an *unlock*: the locks, plus every other key in the same panel. The
  * unlocked colours therefore regenerate while their neighbours keep what they are
  * showing — so unlocking one colour cannot sweep away a manual edit elsewhere.
  *
@@ -145,57 +131,46 @@ function carryExcept(s: ThemeState, unlocked: readonly string[]): ReadonlySet<st
   return carry
 }
 
-/**
- * Re-derive the displayed palettes from the stored bases plus the links. The single
- * point every state transition passes through, which is what makes "links follow their
- * source" true for *every* edit affordance rather than only for regeneration.
- */
-function relink(s: ThemeState): ThemeState {
-  const { syntaxColors, ansiColors } = applyLinks({
-    colors: s.colors,
-    baseSyntaxColors: s.baseSyntaxColors,
-    baseAnsiColors: s.baseAnsiColors,
-    links: s.links,
+/** The resolver's input view of a state snapshot (spec §2.1). */
+function toInputs(s: ThemeState): ThemeInputs {
+  return {
     isDark: s.isDark,
-  })
-  return { ...s, syntaxColors, ansiColors }
+    baseHue: s.baseHue,
+    scheme: s.scheme,
+    uiSaturation: s.uiSaturation,
+    syntaxSaturation: s.syntaxSaturation,
+    assignment: s.assignment,
+  }
+}
+
+/** The resolver's palette view of a state snapshot. */
+function toPalette(s: ThemeState): ThemePalette {
+  return { ui: s.colors, syntax: s.baseSyntaxColors, ansi: s.baseAnsiColors }
 }
 
 /**
- * Re-resolve every *base* colour from one state snapshot. Pure and deterministic: given
- * the same state it returns the same palette, and it consumes no randomness. Links are
- * applied by the caller (`commit`), so there is exactly one place they are resolved.
- *
- * `carry` names the keys whose present value survives the resolve untouched. It is
- * normally the lock set — but see `carryExcept`: unlocking one colour must re-resolve
- * *that* colour without disturbing its neighbours.
+ * Re-derive the displayed palettes from the stored bases plus the links. Thin wrapper
+ * over `relinkPalette` — the pure derivation lives in `@/lib/themes/resolve`.
+ */
+function relink(s: ThemeState): ThemeState {
+  const { syntax, ansi } = relinkPalette({
+    colors: s.colors,
+    baseSyntax: s.baseSyntaxColors,
+    baseAnsi: s.baseAnsiColors,
+    links: s.links,
+    isDark: s.isDark,
+  })
+  return { ...s, syntaxColors: syntax, ansiColors: ansi }
+}
+
+/**
+ * Re-resolve every *base* colour from one state snapshot. Thin wrapper over
+ * `resolvePalette`; the pure resolve lives in `@/lib/themes/resolve`. Links are applied
+ * by the caller (`commit`), so there is exactly one place they are resolved.
  */
 function resolveAll(s: ThemeState, carry: ReadonlySet<string> = s.lockedColors): ThemeState {
-  const input = {
-    assignment: s.assignment,
-    scheme: s.scheme,
-    baseHue: s.baseHue,
-    isDark: s.isDark,
-    uiSaturation: s.uiSaturation,
-  }
-
-  const colors = resolveUiColors(
-    input,
-    pickLocked(s.colors, carry) as Partial<UIColors>
-  )
-  const pools = buildPools(input, colors)
-  const baseSyntaxColors = resolveSyntaxColors(
-    {
-      assignment: s.assignment,
-      pools,
-      syntaxSaturation: s.syntaxSaturation,
-      backgroundColor: colors.BG1,
-    },
-    pickLocked(s.baseSyntaxColors, carry) as Partial<SyntaxColors>
-  )
-  const baseAnsiColors = resolveAnsiColors(s.assignment, colors.BG1)
-
-  return { ...s, colors, baseSyntaxColors, baseAnsiColors }
+  const { ui, syntax, ansi } = resolvePalette(toInputs(s), carry, toPalette(s))
+  return { ...s, colors: ui, baseSyntaxColors: syntax, baseAnsiColors: ansi }
 }
 
 /**
