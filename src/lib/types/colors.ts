@@ -89,22 +89,3 @@ const stringShape = <K extends string>(
 export const UIColorsSchema = z.object(stringShape(UI_KEYS))
 export const SyntaxColorsSchema = z.object(stringShape(SYNTAX_KEYS))
 export const AnsiColorsSchema = z.object(stringShape(ANSI_KEYS))
-
-// Update the SavedThemeSchema to match the database schema
-export const SavedThemeSchema = z.object({
-  id: z.number(),
-  name: z.string(),
-  userId: z.string(),
-  uiColors: UIColorsSchema,
-  syntaxColors: SyntaxColorsSchema,
-  ansiColors: AnsiColorsSchema,
-  isDark: z.boolean(),
-  baseHue: z.number(),
-  uiSaturation: z.number(),
-  syntaxSaturation: z.number(),
-  scheme: z.union([z.nativeEnum(ColorScheme), z.string()]), // Accept both enum and string
-  createdAt: z.date(),
-  updatedAt: z.date(),
-})
-
-export type SavedTheme = z.infer<typeof SavedThemeSchema>
