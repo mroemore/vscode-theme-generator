@@ -9,6 +9,10 @@ export function canonicalise(value: unknown): unknown {
     return value.map(canonicalise)
   }
   if (typeof value === 'object' && value !== null) {
+    // Only plain objects get sorted; anything with a different prototype
+    // (Date, Map, …) passes through untouched.
+    const proto: unknown = Object.getPrototypeOf(value)
+    if (proto !== Object.prototype && proto !== null) return value
     const sorted: Record<string, unknown> = {}
     for (const key of Object.keys(value).sort()) {
       sorted[key] = canonicalise((value as Record<string, unknown>)[key])
@@ -38,17 +42,11 @@ export function fnv1a64(input: string): string {
   return h.toString(16).padStart(16, '0')
 }
 
-// SHA-256 hex via WebCrypto; falls back to fnv1a64 where crypto.subtle is
-// unavailable (insecure contexts, e.g. a phone on a plain-http LAN IP — spec §5.1).
-// Same input, same output everywhere; the fallback only trades collision resistance.
-export async function digest(input: string): Promise<string> {
-  const subtle = globalThis.crypto?.subtle
-  if (subtle) {
-    const buf = await subtle.digest('SHA-256', new TextEncoder().encode(input))
-    return [...new Uint8Array(buf)]
-      .map((b) => b.toString(16).padStart(2, '0'))
-      .join('')
-  }
+// fnv1a64 in every context, deliberately: a digest that switches algorithm by
+// browsing context produces two incompatible value spaces for the same theme, so
+// a duplicate saved over plain http (spec §5.1) would not be recognised over
+// https. Consistency beats 256 bits for a local catalogue of human-named themes.
+export function digest(input: string): string {
   return fnv1a64(input)
 }
 
@@ -56,7 +54,7 @@ export async function digest(input: string): Promise<string> {
 // so the two exporters' differing token blocks cannot split one theme. NOTE:
 // identity is computed per export format until the diffEditor.diagonalFill drift
 // between the exporters (spec §5.3) is resolved.
-export async function propsHash(theme: string | object): Promise<string> {
+export function propsHash(theme: string | object): string {
   const parsed: unknown = typeof theme === 'string' ? JSON.parse(theme) : theme
   const { type, colors } = parsed as { type: unknown; colors: unknown }
   return digest(canonicalString({ type, colors }))
