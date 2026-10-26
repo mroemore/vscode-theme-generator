@@ -174,7 +174,11 @@ export function openRecord(record: SavedTheme): {
     ansi: mergePanel(record.palette.ansi, record.purePalette.ansi, fresh.ansi),
   }
 
-  const displayed = relinkPalette({
+  // Link over the merged pre-link palette and discard the result: the call is the proof
+  // that re-linking is well-defined on this state. `palette` must stay PRE-link (design
+  // §1.2), because it is what the next save compares against `purePalette` — writing the
+  // linked values back would make a linked target look hand-edited forever after.
+  relinkPalette({
     colors: merged.ui,
     baseSyntax: merged.syntax,
     baseAnsi: merged.ansi,
@@ -183,7 +187,7 @@ export function openRecord(record: SavedTheme): {
   })
   return {
     inputs: record.inputs,
-    palette: { ui: merged.ui, syntax: displayed.syntax, ansi: displayed.ansi },
+    palette: merged,
     links: record.links,
     locks,
   }
