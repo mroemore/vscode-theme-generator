@@ -7,6 +7,7 @@ import ExportButton from '@/components/ExportButton'
 import ExportSemanticButton from '@/components/ExportSemanticButton'
 import ThemePreview from '@/components/ThemePreview'
 import ThemeControls from '@/components/ThemeControls'
+import ThemeLibrary from '@/components/ThemeLibrary'
 import SyntaxColorList from '@/components/SyntaxColorList'
 import ColorList from '@/components/ColorList'
 import AnsiColorList from '@/components/AnsiColorList'
@@ -59,6 +60,7 @@ const ThemeGenerator = () => {
         <div className="flex flex-wrap lg:flex-nowrap gap-8">
           <div className="flex flex-col items-center justify-between flex-shrink">
             <div className="flex flex-col items-center flex-1 gap-5">
+              <ThemeLibrary />
               <ThemeControls />
               <div className="">
                 <ActiveColorPicker />

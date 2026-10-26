@@ -19,7 +19,7 @@ import { pickLocked, relinkPalette, resolvePalette } from '@/lib/themes/resolve'
 import { openRecord } from '@/lib/themes/record'
 import { useLibrary } from '@/hooks/useLibrary'
 import type { ThemeSummary } from '@/hooks/useLibrary'
-import type { ThemeInputs, ThemePalette } from '@/lib/themes/schema'
+import type { SavedTheme, ThemeInputs, ThemePalette } from '@/lib/themes/schema'
 import { ColorScheme } from '@/lib/types/colors'
 import { drawTheme, redrawAnsi } from '@/lib/colors/assignment'
 import type { Assignment, PoolMode } from '@/lib/colors/assignment'
@@ -119,6 +119,12 @@ interface ThemeContextType {
   /** False until the index has been read after mount; the catalogue renders a skeleton. */
   libraryLoaded: boolean
   themes: ThemeSummary[]
+  /**
+   * Read one stored record, or null when its bytes are missing or unreadable. The catalogue
+   * exports the row it is on, which is not necessarily the open theme, so it needs the record
+   * rather than the live palette.
+   */
+  readTheme: (id: string) => SavedTheme | null
   openTheme: (id: string) => void
   newTheme: () => void
   renameTheme: (id: string, name: string) => void
@@ -737,6 +743,7 @@ export const ThemeProvider: React.FC<{
     lastError,
     libraryLoaded,
     themes,
+    readTheme: readRecord,
     openTheme,
     newTheme,
     renameTheme,
