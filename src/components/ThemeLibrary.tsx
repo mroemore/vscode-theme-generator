@@ -163,12 +163,17 @@ const ThemeLibrary: React.FC<ThemeLibraryProps> = ({ compact = false }) => {
     name: string
   } | null>(null)
   const [importError, setImportError] = useState<string | null>(null)
+  // A successful import can still have something to say — a malformed metadata block
+  // that was ignored — and that is not an error.
+  const [importNote, setImportNote] = useState<string | null>(null)
 
   const runImport = async (file: File, asNew = false) => {
     setImportError(null)
+    setImportNote(null)
     const result = await importFile(file, { asNew })
     if (result.kind === 'theme') {
       setDuplicate(null)
+      if (result.note !== undefined) setImportNote(result.note)
       return
     }
     if (result.kind === 'invalid') {
@@ -181,6 +186,7 @@ const ThemeLibrary: React.FC<ThemeLibraryProps> = ({ compact = false }) => {
 
   const pickFile = () => {
     setImportError(null)
+    setImportNote(null)
     if (fileRef.current === null) return
     // Cleared *before* the picker opens: a repeat import of the same file must produce a
     // change event, and a cancelled picker must not leave yesterday's file armed.
@@ -403,6 +409,16 @@ const ThemeLibrary: React.FC<ThemeLibraryProps> = ({ compact = false }) => {
           style={{ color: colors.ERROR }}
         >
           {importError}
+        </p>
+      )}
+
+      {importNote !== null && (
+        <p
+          data-testid="theme-import-note"
+          className="mb-2 text-xs"
+          style={{ color: colors.FG2 }}
+        >
+          {importNote}
         </p>
       )}
 

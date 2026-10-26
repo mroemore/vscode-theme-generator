@@ -16,15 +16,16 @@
 // enters the undo stack (Tasks 11–13).
 
 import { ansiSpec, ANSI_KEYS } from '@/lib/colors/ansi'
+import { ansiTargetId } from '@/lib/colors/links'
 import { syntaxSpec, SYNTAX_KEYS } from '@/lib/colors/syntax'
 import { uiSpec, UI_KEYS } from '@/lib/colors/ui'
+import type { UIKey } from '@/lib/colors/ui'
 import { propsHash } from '@/lib/themes/canonical'
 import { openRecord, recordFromOpen } from '@/lib/themes/record'
 import { resolvePalette } from '@/lib/themes/resolve'
-import { parseStoredTheme, SCHEMA_VERSION } from '@/lib/themes/schema'
-import type { SavedTheme, ThemeInputs, ThemePalette } from '@/lib/themes/schema'
+import { parseStoredTheme, parseThemeInputs, SCHEMA_VERSION } from '@/lib/themes/schema'
+import type { SavedTheme, ThemePalette } from '@/lib/themes/schema'
 import type { Links } from '@/lib/colors/links'
-import { ColorScheme } from '@/lib/types/colors'
 import type { AnsiColors, SyntaxColors, UIColors } from '@/lib/types/colors'
 
 /** Anything larger is refused before it is parsed. VS Code themes are tens of KB. */
@@ -32,7 +33,12 @@ export const MAX_IMPORT_BYTES = 2 * 1024 * 1024
 
 /** A file that produced a record, or one that is already in the library. */
 export type ImportResult =
-  | { kind: 'theme'; record: SavedTheme }
+  | {
+      kind: 'theme'
+      record: SavedTheme
+      /** Set when an `x-themegen` block was present but unusable and was ignored. */
+      note?: string
+    }
   | { kind: 'duplicate'; existing: SavedTheme }
   | { kind: 'invalid'; reason: string }
 
@@ -311,29 +317,39 @@ export function foreignPaletteFrom(raw: JsonObject, fallback?: ThemePalette): Th
 
 // ── metadata ─────────────────────────────────────────────────────────────────
 
-function readInputs(value: unknown): ThemeInputs | null {
-  if (!isObject(value)) return null
-  const { isDark, baseHue, scheme, uiSaturation, syntaxSaturation, assignment } = value
-  if (typeof isDark !== 'boolean' || typeof baseHue !== 'number') return null
-  if (typeof uiSaturation !== 'number' || typeof syntaxSaturation !== 'number') return null
-  if (typeof scheme !== 'number' || ColorScheme[scheme] === undefined) return null
-  if (!isObject(assignment) || typeof assignment.seed !== 'number') return null
-  return value as unknown as ThemeInputs
-}
+// The file is untrusted, so a metadata key is only honoured when it names a real
+// palette key: a lock on `BG99` (or `__proto__`) is dropped rather than stored, and a
+// link target must be a syntax key or an `ansi`-prefixed ANSI key. Assigning an
+// unchecked `__proto__` key would otherwise change the object's prototype and lose the
+// whole record downstream.
+const UI_KEY_SET: ReadonlySet<string> = new Set(UI_KEYS)
+const LOCK_KEYS: ReadonlySet<string> = new Set([
+  ...UI_KEYS,
+  ...SYNTAX_KEYS,
+  ...ANSI_KEYS.map(ansiTargetId),
+])
+const LINK_TARGETS: ReadonlySet<string> = new Set([
+  ...SYNTAX_KEYS,
+  ...ANSI_KEYS.map(ansiTargetId),
+])
 
 function readLocks(value: unknown): string[] {
-  return Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : []
+  return Array.isArray(value)
+    ? value.filter((v): v is string => typeof v === 'string' && LOCK_KEYS.has(v))
+    : []
 }
 
 function readLinks(value: unknown): Links {
   if (!isObject(value)) return {}
-  const out: Record<string, { source: string; adjust: boolean }> = {}
+  const out: Links = {}
   for (const [key, entry] of Object.entries(value)) {
-    if (!isObject(entry)) continue
-    if (typeof entry.source !== 'string' || typeof entry.adjust !== 'boolean') continue
-    out[key] = { source: entry.source, adjust: entry.adjust }
+    if (!LINK_TARGETS.has(key) || !isObject(entry)) continue
+    // A link's source is always a theme (UI) colour — direction is top-down.
+    if (typeof entry.source !== 'string' || !UI_KEY_SET.has(entry.source)) continue
+    if (typeof entry.adjust !== 'boolean') continue
+    out[key] = { source: entry.source as UIKey, adjust: entry.adjust }
   }
-  return out as Links
+  return out
 }
 
 function timestamp(value: unknown, fallback: number): number {
@@ -384,9 +400,9 @@ function recordFromMetadata(
   now: number,
   hash: string
 ): SavedTheme | null {
-  const version = meta.schemaVersion
-  if (typeof version === 'number' && version > SCHEMA_VERSION) return null
-  const inputs = readInputs(meta.inputs)
+  // The caller has already ruled out a genuinely newer `schemaVersion`. Anything else
+  // that fails the schema is malformed, and the caller falls back to the palette route.
+  const inputs = parseThemeInputs(meta.inputs)
   if (inputs === null) return null
 
   const locks = new Set(readLocks(meta.locks))
@@ -458,6 +474,9 @@ function recordFromPalette(
 
 // ── the entry points ─────────────────────────────────────────────────────────
 
+/** A background that is a colour, not merely a string: `#RGB`, `#RRGGBB` or `#RRGGBBAA`. */
+const BACKGROUND_HEX = /^#(?:[0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i
+
 function readImport(
   fileName: string,
   text: string
@@ -471,36 +490,88 @@ function readImport(
     return { reason: 'Not a readable theme file (expected JSON or JSONC).' }
   }
   const colors = raw.colors
-  if (!isObject(colors) || typeof colors['editor.background'] !== 'string') {
-    return { reason: 'Not a VS Code colour theme (no colors.editor.background).' }
+  // A theme must say what its background is, and it must be a hex colour: `"red"` or
+  // `"#GGGGGG"` would otherwise import with BG1 silently taken from the fallback.
+  // 8-digit hex is accepted and its alpha dropped (see `normalizeColor`).
+  const background = isObject(colors) ? colors['editor.background'] : undefined
+  if (typeof background !== 'string' || !BACKGROUND_HEX.test(background.trim())) {
+    return {
+      reason: 'Not a VS Code colour theme (colors.editor.background must be a hex colour).',
+    }
   }
   return { raw, hash: hashOf(raw) }
 }
 
-/** Turn a read file into a record, or explain why it cannot become one. */
+const NO_COLOURS = 'The file has no usable colours.'
+const NEWER_VERSION = 'The file was written by a newer version of this app.'
+const MALFORMED_METADATA =
+  "The file's x-themegen block is malformed and its colours could not be read."
+const IGNORED_METADATA =
+  "The file's x-themegen block is malformed, so its colours were imported without it."
+
+/**
+ * Turn a read file into a record, or explain why it cannot become one.
+ *
+ * The metadata route is best-effort: only a `schemaVersion` *newer* than this build
+ * declines the file, because that is the one case where the palette may legitimately
+ * mean something we cannot reproduce. A malformed block (bad inputs, junk lock or link
+ * keys, a block that is not even an object) falls back to the palette route instead of
+ * blaming the app version. The whole body is guarded: nothing a file says may throw out
+ * of the importer.
+ */
 function buildRecord(
   read: { raw: JsonObject; hash: string },
   fileName: string,
   existing: readonly SavedTheme[],
   fallback: ThemePalette | undefined
 ): ImportResult {
-  const meta = isObject(read.raw['x-themegen']) ? read.raw['x-themegen'] : null
+  const blockPresent = Object.prototype.hasOwnProperty.call(read.raw, 'x-themegen')
+  const rawMeta = read.raw['x-themegen']
+  const meta = isObject(rawMeta) ? rawMeta : null
+  // A block that is present but not an object is malformed like any other bad block.
+  const malformedBlock = blockPresent && meta === null
   const now = Date.now()
-  const record =
-    meta === null
-      ? recordFromPalette(read.raw, fileName, existing, fallback, now, read.hash, null)
-      : recordFromMetadata(read.raw, meta, fileName, existing, fallback, now, read.hash)
-
-  if (record === null) {
-    return {
-      kind: 'invalid',
-      reason:
-        meta === null
-          ? 'The file has no usable colours.'
-          : 'The file was written by a newer version of this app.',
+  try {
+    if (meta !== null) {
+      const version = meta.schemaVersion
+      if (typeof version === 'number' && version > SCHEMA_VERSION) {
+        return { kind: 'invalid', reason: NEWER_VERSION }
+      }
+      const fromMetadata = recordFromMetadata(
+        read.raw,
+        meta,
+        fileName,
+        existing,
+        fallback,
+        now,
+        read.hash
+      )
+      if (fromMetadata !== null) return { kind: 'theme', record: fromMetadata }
     }
+
+    // No block, or a block that did not validate: the file's colours are still a theme.
+    const fromPalette = recordFromPalette(
+      read.raw,
+      fileName,
+      existing,
+      fallback,
+      now,
+      read.hash,
+      meta
+    )
+    const ignored = meta !== null || malformedBlock
+    if (fromPalette !== null) {
+      return ignored
+        ? { kind: 'theme', record: fromPalette, note: IGNORED_METADATA }
+        : { kind: 'theme', record: fromPalette }
+    }
+    return { kind: 'invalid', reason: ignored ? MALFORMED_METADATA : NO_COLOURS }
+  } catch {
+    // Belt and braces: a shape the schema did not anticipate must not reach the UI as a
+    // thrown promise rejection (which a `void runImport` would leave as a silent no-op).
+    const ignored = malformedBlock || meta !== null
+    return { kind: 'invalid', reason: ignored ? MALFORMED_METADATA : NO_COLOURS }
   }
-  return { kind: 'theme', record }
 }
 
 /**

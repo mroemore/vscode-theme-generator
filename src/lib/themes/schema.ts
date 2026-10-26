@@ -1,7 +1,10 @@
 import { z } from 'zod'
 
+import { ANSI_KEYS } from '@/lib/colors/ansi'
 import type { Assignment } from '@/lib/colors/assignment'
 import type { Links } from '@/lib/colors/links'
+import { SYNTAX_GROUPS, SYNTAX_KEYS } from '@/lib/colors/syntax'
+import { UI_KEYS } from '@/lib/colors/ui'
 import {
   AnsiColorsSchema,
   ColorScheme,
@@ -53,17 +56,80 @@ const paletteSchema = z.object({
   ansi: AnsiColorsSchema,
 })
 
-// Structural validation, not blind acceptance: a record missing `assignment.seed`
-// is rejected. The inner blocks stay `z.unknown()` — the per-key palettes above are
-// what actually guards the colours — and passthrough keeps future plain-JSON fields.
+// Structural validation, not blind acceptance. The resolvers dereference
+// `assignment.ui.entries[key]`, `assignment.syntax.entries[key]` and
+// `assignment.ansi.entries[key]` for every key, so a block missing one of those
+// objects throws inside `resolvePalette`. Validate the shape the resolver actually
+// reads, before anything resolves; passthrough keeps future plain-JSON fields.
+const slotSchema = z.object({
+  pool: z.enum(['base', 'ac1', 'ac2']),
+  index: z.number(),
+})
+
+const uiEntrySchema = z
+  .object({
+    slotIndex: z.number(),
+    exprJitter: z.number(),
+    hueJitter: z.number(),
+    satJitter: z.number(),
+    lightJitter: z.number(),
+  })
+  .passthrough()
+
+const syntaxEntrySchema = z
+  .object({ slot: slotSchema, lightShiftRoll: z.number(), hueShiftRoll: z.number() })
+  .passthrough()
+
+const ansiEntrySchema = z
+  .object({ hueRoll: z.number(), satRoll: z.number(), lightRoll: z.number() })
+  .passthrough()
+
+const shapeSchema = z
+  .object({
+    nestedSides: z.array(z.number()),
+    rosetteFold: z.number(),
+    torusMajor: z.number(),
+    torusTwist: z.array(z.number()),
+  })
+  .passthrough()
+
+/** A record that must carry every known key, each validated by `entry`. */
+function keyedRecord<K extends string>(keys: readonly K[], entry: z.ZodTypeAny): z.ZodTypeAny {
+  return z.record(entry).superRefine((value, ctx) => {
+    for (const key of keys) {
+      if (!(key in value)) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: `missing ${key}` })
+      }
+    }
+  })
+}
+
 const assignmentSchema = z
   .object({
     seed: z.number(),
-    poolMode: z.string(),
-    shape: z.unknown(),
-    ui: z.unknown(),
-    syntax: z.unknown(),
-    ansi: z.unknown(),
+    poolMode: z.enum(['full', 'base']),
+    shape: shapeSchema,
+    ui: z
+      .object({
+        bgRoll: z.number(),
+        fgRoll: z.number(),
+        entries: keyedRecord(UI_KEYS, uiEntrySchema),
+      })
+      .passthrough(),
+    syntax: z
+      .object({
+        groups: keyedRecord(SYNTAX_GROUPS, slotSchema),
+        entries: keyedRecord(SYNTAX_KEYS, syntaxEntrySchema),
+      })
+      .passthrough(),
+    ansi: z
+      .object({
+        seed: z.number(),
+        satRoll: z.number(),
+        lightRoll: z.number(),
+        entries: keyedRecord(ANSI_KEYS, ansiEntrySchema),
+      })
+      .passthrough(),
   })
   .passthrough()
 
@@ -80,8 +146,19 @@ const linksSchema = z.record(
   z.object({ source: z.string(), adjust: z.boolean() })
 )
 
-// `poolMode: z.string()` above widens past the `PoolMode` union, so the inferred type
-// is not assignable to `SavedTheme`; the cast states the intent without `any`.
+/**
+ * Validate an `x-themegen.inputs` block before a resolver ever reads it. The resolver
+ * dereferences nested entries per key, so `readInputs`-style spot checks are not enough:
+ * this returns the block only when the whole shape the generator walks is present.
+ */
+export function parseThemeInputs(raw: unknown): ThemeInputs | null {
+  const parsed = inputsSchema.safeParse(raw)
+  return parsed.success ? (parsed.data as unknown as ThemeInputs) : null
+}
+
+// The schemas above are structural (records, not the interfaces' exact brands), so the
+// inferred type is not assignable to `SavedTheme`; the cast states the intent without
+// `any`.
 export const SavedThemeSchema = z.object({
   schemaVersion: z.literal(SCHEMA_VERSION),
   id: z.string(),

@@ -15,7 +15,16 @@ export function canonicalise(value: unknown): unknown {
     if (proto !== Object.prototype && proto !== null) return value
     const sorted: Record<string, unknown> = {}
     for (const key of Object.keys(value).sort()) {
-      sorted[key] = canonicalise((value as Record<string, unknown>)[key])
+      // `defineProperty`, not `sorted[key] = …`: a `colors.__proto__` own-property (which
+      // `JSON.parse` produces) would otherwise invoke the prototype setter and vanish,
+      // making two different files hash the same. The insertion order is the sorted key
+      // order exactly as before.
+      Object.defineProperty(sorted, key, {
+        value: canonicalise((value as Record<string, unknown>)[key]),
+        enumerable: true,
+        configurable: true,
+        writable: true,
+      })
     }
     return sorted
   }

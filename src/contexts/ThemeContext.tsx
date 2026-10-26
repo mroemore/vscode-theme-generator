@@ -17,7 +17,7 @@ import {
 import { resolveAnsiColors } from '@/lib/utils/ansiColors'
 import { pickLocked, relinkPalette, resolvePalette } from '@/lib/themes/resolve'
 import { openRecord } from '@/lib/themes/record'
-import { parseImport, parseImportAsNew } from '@/lib/themes/importer'
+import { MAX_IMPORT_BYTES, parseImport, parseImportAsNew } from '@/lib/themes/importer'
 import type { ImportResult } from '@/lib/themes/importer'
 import { useLibrary } from '@/hooks/useLibrary'
 import type { ThemeSummary } from '@/hooks/useLibrary'
@@ -698,6 +698,15 @@ export const ThemeProvider: React.FC<{
       // Fold a queued edit in first: the duplicate check hashes what is stored, so a save
       // still sitting in the debounce would otherwise be compared against stale bytes.
       flush()
+
+      // Refuse on `file.size` before materialising the bytes: `file.text()` would pull a
+      // multi-megabyte blob into memory just so the importer could reject it.
+      if (file.size > MAX_IMPORT_BYTES) {
+        return {
+          kind: 'invalid',
+          reason: `File is larger than 2 MB (${Math.round(file.size / 1024)} KB).`,
+        }
+      }
 
       let text: string
       try {
