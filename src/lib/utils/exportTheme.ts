@@ -1826,9 +1826,9 @@ export function generateThemeJSON(
         },
       },
     ],
-    // Present only when the caller supplies metadata, so omitting the parameter keeps
-    // the output byte-identical to the pre-metadata exporter.
-    ...(metadata === undefined ? {} : { 'x-themegen': metadata }),
+    // Present only when the caller supplies metadata, so omitting the parameter (or
+    // passing null) keeps the output byte-identical to the pre-metadata exporter.
+    ...(metadata == null ? {} : { 'x-themegen': metadata }),
   }
 
   return JSON.stringify(theme, null, 2)

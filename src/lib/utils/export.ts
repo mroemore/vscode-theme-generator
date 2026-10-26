@@ -11,7 +11,8 @@ export function generateSemanticThemeJSON(
   name: string = 'Generated Color Theme',
   colors: UIColors,
   syntaxColors: SyntaxColors,
-  ansiColors: AnsiColors
+  ansiColors: AnsiColors,
+  metadata?: object
 ): { themeJSON: string; themeObject: VSCodeTheme } {
   const theme = {
     name: name,
@@ -1653,6 +1654,9 @@ export function generateSemanticThemeJSON(
       number: syntaxColors.constant, //constant
       operator: syntaxColors.operator, //operator
     },
+    // Present only when the caller supplies metadata, so omitting the parameter (or
+    // passing null) keeps the output byte-identical to the pre-metadata exporter.
+    ...(metadata == null ? {} : { 'x-themegen': metadata }),
   }
 
   return { themeJSON: JSON.stringify(theme), themeObject: theme }
