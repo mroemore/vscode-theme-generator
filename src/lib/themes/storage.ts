@@ -5,7 +5,7 @@
 //
 //   vsc_themegen.library.v1         the index: one small record, { schemaVersion, currentId, order }
 //   vsc_themegen.theme.v1.<id>      one SavedTheme per theme, debounced on every change
-//   vsc_themegen.history.v1.<id>    one StoredHistory per theme
+//   vsc_themegen.history.v1.<id>    one History per theme
 //
 // Every public function takes an optional `store` and must work when it is absent,
 // null, or throws (design §2.2 / Review Focus 1). Storage is a cache, never the
@@ -20,6 +20,7 @@
 
 import { parseStoredTheme } from '@/lib/themes/schema'
 import type { SavedTheme } from '@/lib/themes/schema'
+import type { History } from '@/lib/themes/diff'
 
 /** The narrow slice of the Storage interface this module needs. */
 export interface KeyValueStore {
@@ -38,17 +39,7 @@ export interface LibraryIndex {
   order: string[]
 }
 
-/**
- * Placeholder history shape for Task 5. Task 11/12 replaces this with the real
- * `History` (`{ cursor, steps: ThemePatch[] }`); the storage layer only needs to
- * move bytes, so the step type stays `unknown[]` here and no `diff.ts` is imported.
- */
-export interface StoredHistory {
-  cursor: number
-  steps: unknown[]
-}
-
-/** Per-theme step cap (design §4.4 / §2.2). */
+/** Per-theme step cap (design §4.4 / §2.2). Mirrors `HISTORY_CAP` in `diff.ts`. */
 export const MAX_STEPS_PER_THEME = 20
 
 /** Global history budget in bytes (design §2.2): 1.5 MB. */
@@ -284,14 +275,14 @@ export function removeTheme(id: string, store: Resolved = browserStore()): void 
 // ---------------------------------------------------------------------------
 
 /** An empty history — also the sentinel for "no store", per the harness contract. */
-export const BROWSER_UNAVAILABLE: StoredHistory = { cursor: 0, steps: [] }
+export const BROWSER_UNAVAILABLE: History = { cursor: 0, steps: [] }
 
 /**
  * Read one theme's history. A missing or corrupt history is an empty one: losing
  * undo steps is far better than throwing out of a render, and a broken history must
  * never affect the theme itself (it lives under its own key for exactly this reason).
  */
-export function readHistory(id: string, store: Resolved = browserStore()): StoredHistory {
+export function readHistory(id: string, store: Resolved = browserStore()): History {
   const raw = safeGet(store, historyKey(id))
   if (raw === null) return { cursor: 0, steps: [] }
   try {
@@ -313,14 +304,14 @@ export function readHistory(id: string, store: Resolved = browserStore()): Store
  * Trim to the per-theme retention cap, keeping the newest steps and adjusting the
  * cursor by however many were dropped from the front (design §4.4).
  */
-function capHistory(history: StoredHistory): StoredHistory {
+function capHistory(history: History): History {
   const { steps, cursor } = history
   if (steps.length <= MAX_STEPS_PER_THEME) return { cursor, steps }
   const drop = steps.length - MAX_STEPS_PER_THEME
   return { cursor: Math.max(0, cursor - drop), steps: steps.slice(drop) }
 }
 
-function serialiseHistory(history: StoredHistory): string {
+function serialiseHistory(history: History): string {
   return JSON.stringify(history)
 }
 
@@ -335,7 +326,7 @@ function serialiseHistory(history: StoredHistory): string {
  */
 export function writeHistory(
   id: string,
-  history: StoredHistory,
+  history: History,
   store: Resolved = browserStore()
 ): SetResult {
   if (store === null || store === undefined) return 'quota'
@@ -368,7 +359,7 @@ export function writeHistory(
 }
 
 /** Drop the oldest `round(steps * fraction)` entries, adjusting the cursor. */
-function shrinkSteps(history: StoredHistory, fraction: number): StoredHistory {
+function shrinkSteps(history: History, fraction: number): History {
   const drop = Math.floor(history.steps.length * fraction)
   if (drop <= 0) return history
   return {
@@ -419,7 +410,7 @@ export function pruneToBudget(
   ]
 
   // Snapshot the step counts so the loop is bounded and re-serialisation is done once.
-  const stepsById = new Map<string, unknown[]>()
+  const stepsById = new Map<string, History['steps']>()
   for (const id of othersFirst) {
     stepsById.set(id, readHistory(id, store).steps)
   }
