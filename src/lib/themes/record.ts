@@ -6,11 +6,13 @@
 // they disagree is a hand edit, and it is kept exactly as saved. That comparison is the
 // whole mechanism — there is no other "edited" flag.
 //
-// `palette` and `purePalette` are *displayed* (post-link) palettes, because that is what
-// the exporter consumes and therefore what a saved theme is compared against.
+// `palette` and `purePalette` are *pre-link* (base) palettes: they hold the generator's
+// colours before any link is applied. Applying the links for display is the caller's
+// business, so a save never writes a linked colour into a base field and "unlink" can
+// always revert a target to the generator's seeded colour.
 
 import type { Links } from '@/lib/colors/links'
-import { relinkPalette, resolvePalette } from '@/lib/themes/resolve'
+import { resolvePalette } from '@/lib/themes/resolve'
 import { SCHEMA_VERSION } from '@/lib/themes/schema'
 import type {
   SavedTheme,
@@ -48,25 +50,18 @@ export interface RecordMeta {
 
 /**
  * The generator's palette with no hand edits: resolve from the inputs, carrying only the
- * locked keys through from `palette`, then apply the links. Locks are the *only* carried
- * keys — everything else is regenerated. Do not widen this: carrying a hand-edited key
- * would erase the very distinction `purePalette` exists to record.
+ * locked keys through from `palette`. Locks are the *only* carried keys — everything else
+ * is regenerated. Do not widen this: carrying a hand-edited key would erase the very
+ * distinction `purePalette` exists to record. The result is pre-link; links are applied
+ * only for display by the caller.
  */
 export function pureOf(
   inputs: ThemeInputs,
   locks: ReadonlySet<string>,
-  palette: ThemePalette,
-  links: Links
+  palette: ThemePalette
 ): ThemePalette {
   const base = resolvePalette(inputs, locks, palette)
-  const displayed = relinkPalette({
-    colors: base.ui,
-    baseSyntax: base.syntax,
-    baseAnsi: base.ansi,
-    links,
-    isDark: inputs.isDark,
-  })
-  return { ui: base.ui, syntax: displayed.syntax, ansi: displayed.ansi }
+  return { ui: base.ui, syntax: base.syntax, ansi: base.ansi }
 }
 
 /** Assemble a {@link SavedTheme} from the live theme state and its library metadata. */
@@ -81,8 +76,8 @@ export function toRecord(s: ThemeStateLike, meta: RecordMeta): SavedTheme {
   }
   const palette: ThemePalette = {
     ui: s.colors,
-    syntax: s.syntaxColors,
-    ansi: s.ansiColors,
+    syntax: s.baseSyntaxColors,
+    ansi: s.baseAnsiColors,
   }
   const locks = [...s.lockedColors]
   return {
@@ -93,7 +88,7 @@ export function toRecord(s: ThemeStateLike, meta: RecordMeta): SavedTheme {
     updatedAt: meta.updatedAt,
     inputs,
     palette,
-    purePalette: pureOf(inputs, s.lockedColors, palette, s.links),
+    purePalette: pureOf(inputs, s.lockedColors, palette),
     locks,
     links: s.links,
     propsHash: meta.propsHash,
@@ -122,7 +117,7 @@ export function recordFromOpen(
     updatedAt: meta.updatedAt,
     inputs: open.inputs,
     palette: open.palette,
-    purePalette: pureOf(open.inputs, open.locks, open.palette, open.links),
+    purePalette: pureOf(open.inputs, open.locks, open.palette),
     locks: [...open.locks],
     links: open.links,
     propsHash: meta.propsHash,
@@ -144,9 +139,9 @@ function mergePanel<K extends string>(
 
 /**
  * Reopen a record (design §1.2, option A). Re-resolve from the inputs with the locks
- * carried, keep each key the user hand-edited exactly as saved, adopt the fresh value for
- * every key they did not, then re-apply the links over the merged result so a link added
- * after the save still wins.
+ * carried, keep each key the user hand-edited exactly as saved, and adopt the fresh value
+ * for every key they did not. The returned palette is PRE-link (design §1.2); the caller
+ * applies the links for display.
  *
  * A foreign (palette-only) record has no inputs to re-resolve from; its stored palette is
  * returned verbatim.
@@ -167,24 +162,15 @@ export function openRecord(record: SavedTheme): {
     }
   }
 
-  const fresh = pureOf(record.inputs, locks, record.palette, record.links)
+  const fresh = pureOf(record.inputs, locks, record.palette)
   const merged: ThemePalette = {
     ui: mergePanel(record.palette.ui, record.purePalette.ui, fresh.ui),
     syntax: mergePanel(record.palette.syntax, record.purePalette.syntax, fresh.syntax),
     ansi: mergePanel(record.palette.ansi, record.purePalette.ansi, fresh.ansi),
   }
 
-  // Link over the merged pre-link palette and discard the result: the call is the proof
-  // that re-linking is well-defined on this state. `palette` must stay PRE-link (design
-  // §1.2), because it is what the next save compares against `purePalette` — writing the
-  // linked values back would make a linked target look hand-edited forever after.
-  relinkPalette({
-    colors: merged.ui,
-    baseSyntax: merged.syntax,
-    baseAnsi: merged.ansi,
-    links: record.links,
-    isDark: record.inputs.isDark,
-  })
+  // `merged` is PRE-link (design §1.2): the caller relinks it for display. No relink here
+  // — writing linked values back would make a linked target look hand-edited forever.
   return {
     inputs: record.inputs,
     palette: merged,
