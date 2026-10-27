@@ -591,22 +591,27 @@ export const ThemeProvider: React.FC<{
     commitResolved((s) => {
       const hueVariation = Math.floor(Math.random() * 31) - 15
       const saturationVariation = Math.floor(Math.random() * 21) - 10
-      return {
+      // A generator control: the flag must follow the palette if the button is ever
+      // enabled for a palette-only theme (fix 1 of the 2026-10-27 round).
+      return generated({
         ...s,
         baseHue: (s.baseHue + hueVariation + 360) % 360,
         uiSaturation: clamp(s.uiSaturation + saturationVariation, 0, 100),
         syntaxSaturation: clamp(s.syntaxSaturation + saturationVariation, 0, 100),
-      }
+      })
     })
 
   // A redraw only replaces the ANSI part of the assignment, so the panel has to be
   // re-resolved for it to reach the screen — `commit` alone would leave `baseAnsiColors`
   // untouched and the button would look dead. Locks ride through the resolve as usual.
   const regenerateAnsiColors = () =>
-    commitResolved((s) => ({
-      ...s,
-      assignment: redrawAnsi(s.assignment, randomSeed()),
-    }))
+    commitResolved((s) =>
+      // A generator control too (fix 1 of the 2026-10-27 round): same rule.
+      generated({
+        ...s,
+        assignment: redrawAnsi(s.assignment, randomSeed()),
+      })
+    )
 
   // Locking freezes the value that is on screen right now (`commit` — a plain write, so
   // nothing else in the palette is disturbed). Unlocking *regenerates* that colour, which
@@ -699,11 +704,22 @@ export const ThemeProvider: React.FC<{
         // background. Locked syntax tokens are carried through from the bases (not from
         // the displayed colours, which a link may have overridden), and ANSI re-reads
         // its stored rolls rather than rolling a new palette.
+        //
+        // On a palette-only theme the mode is the polarity read off BG1 at adoption, and
+        // `displayedPalette` (`src/lib/themes/record.ts`) re-derives it from the record's
+        // *current* BG1 — so a hand edit across the light/dark boundary must re-read it
+        // here too, or `commit`'s relink shows the links adjusted for the old polarity
+        // while a catalogue row's export links the same bases with the new one (fix 2,
+        // 2026-10-27 round). A generated theme is untouched: its mode belongs to its own
+        // inputs, never to BG1. The document mode (next-themes) is deliberately left as
+        // it is: a palette-only theme has no generator inputs, so the mode toggle means
+        // nothing for it and the record's inputs never write a mode anywhere.
+        const isDark = s.paletteOnly === true ? foreignInputs(newColor).isDark : s.isDark
         const input = {
           assignment: s.assignment,
           scheme: s.scheme,
           baseHue: s.baseHue,
-          isDark: s.isDark,
+          isDark,
           uiSaturation: s.uiSaturation,
         }
         const pools = buildPools(input, colors)
@@ -711,6 +727,7 @@ export const ThemeProvider: React.FC<{
           ...s,
           links,
           colors,
+          isDark,
           baseSyntaxColors: resolveSyntaxColors(
             {
               assignment: s.assignment,

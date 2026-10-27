@@ -84,8 +84,8 @@ export interface HistoryController {
   clearHistory: () => void
   /**
    * Forget one theme's history for good: cancel its armed write, drop its pending
-   * payload, and remove its stored key. The delete path calls this after removing the
-   * record, so the 400 ms debounce can never re-write a history whose record is gone
+   * payload, and remove its stored key. The delete path calls this *before* removing
+   * the record, so the 400 ms debounce can never write a history whose record is gone
    * (that orphan was invisible to the catalogue and grew without bound).
    */
   forgetTheme: (id: string) => void
@@ -219,8 +219,9 @@ export function useHistory({
 
   /**
    * Forget one theme's history: cancel the write waiting for it, drop the payload, and
-   * clear whatever key it still holds. Called by the delete path right after the record
-   * is removed — once the key is gone nothing in this hook may put bytes back under it.
+   * clear whatever key it still holds. Called by the delete path right *before* the
+   * record is removed — from this point on nothing in this hook may put bytes back
+   * under that key, so no debounce can resurrect a dead theme's history.
    */
   const forgetTheme = useCallback((id: string) => {
     if (pendingWrite.current !== null && pendingWrite.current.id === id) {
