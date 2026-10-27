@@ -9,15 +9,20 @@
 //  - `x-themegen` present → rebuild `inputs`/`locks`/`links` and re-resolve, carrying the
 //    locked keys from the file, so a theme saved by this app reopens its locks (§6.1);
 //  - no `x-themegen` → a *foreign* palette: map what the file's `colors` and
-//    `tokenColors` actually say and fill the rest from `fallback` (§6.2). Task 14 refines
-//    this mapping; the tables below are the seed, derived by hand from `exportTheme.ts`.
+//    `tokenColors` actually say, and fill every key the file does not speak from a
+//    neutral derived from the file's own background (§6.2). That route is
+//    self-contained: an imported theme never depends on which theme happened to be
+//    open when the file was read.
 //
 // Nothing here is user-initiated history: an import is a catalogue action, so it never
 // enters the undo stack (Tasks 11–13).
 
+import Color from 'color'
+
 import { ansiSpec, ANSI_KEYS } from '@/lib/colors/ansi'
 import { ansiTargetId } from '@/lib/colors/links'
-import { syntaxSpec, SYNTAX_KEYS } from '@/lib/colors/syntax'
+import { applyReadability, resolveDrawable, resolveLightnessExpr } from '@/lib/colors/spec'
+import { syntaxSpec, SYNTAX_KEYS, SYNTAX_LIGHTNESS } from '@/lib/colors/syntax'
 import { uiSpec, UI_KEYS } from '@/lib/colors/ui'
 import type { UIKey } from '@/lib/colors/ui'
 import { propsHash } from '@/lib/themes/canonical'
@@ -27,6 +32,7 @@ import { parseStoredTheme, parseThemeInputs, SCHEMA_VERSION } from '@/lib/themes
 import type { SavedTheme, ThemePalette } from '@/lib/themes/schema'
 import type { Links } from '@/lib/colors/links'
 import type { AnsiColors, SyntaxColors, UIColors } from '@/lib/types/colors'
+import { ensureReadability } from '@/lib/utils/colorUtils'
 
 /** Anything larger is refused before it is parsed. VS Code themes are tens of KB. */
 export const MAX_IMPORT_BYTES = 2 * 1024 * 1024
@@ -161,14 +167,19 @@ function colorAt(colors: JsonObject, key: string): string | null {
   return typeof value === 'string' ? normalizeColor(value) : null
 }
 
-// ── the foreign mapping (sec §6.2; Task 14 refines it) ────────────────────────
+// ── the foreign mapping (spec §6.2) ───────────────────────────────────────────
 //
 // Both tables are read the other way round from `exportTheme.ts`: each palette key names
 // the workbench colour / TextMate scope that exporter emits for it, so a file written by
-// any tool that follows the same conventions maps back. First hit wins; nothing is
-// invented — a key the file does not speak falls back to `fallback`.
+// any tool that follows the same conventions maps back. The *first* candidate of a key is
+// the one the exporter emits, so an export of ours re-imports as itself; the rest are the
+// keys other tools use for the same thing.
+//
+// First hit wins; nothing is invented — a key the file does not speak is filled from the
+// neutral below, never from whatever theme happens to be open.
 
-const UI_SOURCES: Record<keyof UIColors, readonly string[]> = {
+/** The workbench colours each UI key is read from, the exporter's own first. */
+export const UI_SOURCES: Record<keyof UIColors, readonly string[]> = {
   BG1: ['editor.background', 'sideBar.background'],
   BG2: ['activityBar.background', 'titleBar.activeBackground', 'tab.activeBackground'],
   BG3: ['textBlockQuote.background', 'dropdown.background'],
@@ -177,7 +188,7 @@ const UI_SOURCES: Record<keyof UIColors, readonly string[]> = {
   FG3: ['statusBar.noFolderForeground'],
   AC1: ['progressBar.background', 'editorLineNumber.activeForeground'],
   AC2: ['activityBarBadge.background', 'button.background', 'badge.background'],
-  BORDER: ['focusBorder', 'editorGroup.border', 'panel.border'],
+  BORDER: ['focusBorder', 'editorGroup.border'],
   INFO: ['editorInfo.foreground', 'editorGutter.modifiedBackground'],
   ERROR: ['errorForeground', 'editorError.foreground'],
   WARNING: ['editorWarning.foreground'],
@@ -185,6 +196,56 @@ const UI_SOURCES: Record<keyof UIColors, readonly string[]> = {
   lineHighlight: ['editorCursor.background', 'editor.foldBackground'],
   selection: ['editor.selectionBackground', 'terminal.selectionBackground'],
   findMatch: ['editor.findMatchBackground'],
+}
+
+/**
+ * The UI keys a foreign file's `colors` map actually supplies — and only those.
+ *
+ * A key the file does not speak is *absent* from the result: filling it is the caller's
+ * business (the palette-only route fills it from the neutral), so this function never
+ * invents a colour and never consults the open theme.
+ */
+export function mapForeignColors(colors: Record<string, string>): Partial<UIColors> {
+  const out: Partial<UIColors> = {}
+  for (const key of UI_KEYS) {
+    for (const source of UI_SOURCES[key]) {
+      const color = colorAt(colors, source)
+      if (color !== null) {
+        out[key] = color
+        break
+      }
+    }
+  }
+  return out
+}
+
+/** The file's `colors` map, narrowed to the string values it may hold. */
+function stringColors(colors: JsonObject): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const [key, value] of Object.entries(colors)) {
+    if (typeof value === 'string') out[key] = value
+  }
+  return out
+}
+
+/** The syntax keys a file's `tokenColors` block actually supplies. */
+function mapForeignSyntax(tokenColors: unknown[]): Partial<SyntaxColors> {
+  const out: Partial<SyntaxColors> = {}
+  for (const key of SYNTAX_KEYS) {
+    const color = tokenColorAt(tokenColors, SYNTAX_SCOPES[key])
+    if (color !== null) out[key] = color
+  }
+  return out
+}
+
+/** The ANSI keys a file's `colors` map actually supplies. */
+function mapForeignAnsi(colors: JsonObject): Partial<AnsiColors> {
+  const out: Partial<AnsiColors> = {}
+  for (const key of ANSI_KEYS) {
+    const color = colorAt(colors, ANSI_SOURCES[key])
+    if (color !== null) out[key] = color
+  }
+  return out
 }
 
 /** Each palette key's representative scope in the exporter's token block. */
@@ -286,30 +347,217 @@ function initialPalette(): ThemePalette {
  * Build a complete palette out of a foreign file: every key the file answers for comes
  * from the file, every key it does not comes from `fallback`. Complete by construction,
  * so a palette-only import is a real theme rather than a half-filled row.
+ *
+ * This is the *carried* palette of the metadata route: it fills a locked key the file
+ * does not carry. The palette-only route does not use it — that route is self-contained
+ * and fills from the neutral instead (see `paletteOnlyPalette`).
  */
 export function foreignPaletteFrom(raw: JsonObject, fallback?: ThemePalette): ThemePalette {
   const filled = fallback ?? initialPalette()
   const colors = isObject(raw.colors) ? raw.colors : {}
   const tokenColors: unknown[] = Array.isArray(raw.tokenColors) ? raw.tokenColors : []
+  const mappedUi = mapForeignColors(stringColors(colors))
+  const mappedSyntax = mapForeignSyntax(tokenColors)
+  const mappedAnsi = mapForeignAnsi(colors)
+
+  const ui = {} as UIColors
+  for (const key of UI_KEYS) ui[key] = mappedUi[key] ?? filled.ui[key]
+  const syntax = {} as SyntaxColors
+  for (const key of SYNTAX_KEYS) syntax[key] = mappedSyntax[key] ?? filled.syntax[key]
+  const ansi = {} as AnsiColors
+  for (const key of ANSI_KEYS) ansi[key] = mappedAnsi[key] ?? filled.ansi[key]
+
+  return { ui, syntax, ansi }
+}
+
+// ── the neutral (spec §6.2) ───────────────────────────────────────────────────
+//
+// "Self-contained, not relative to the open theme": a foreign record's colours come
+// from the file and from the file's own background — never from whatever theme
+// happened to be open when the file was read.
+//
+// The neutral below is that background turned into a complete palette, resolved against
+// the app's own spec (`uiSpec`, `syntaxSpec`, `ansiSpec`), so a foreign theme that says
+// nothing about a key still lands on a palette the app would recognise: every jitter
+// resolves at its mid-point, the surfaces keep the background's own tint, the text
+// colours sit at the far pole, and the accents and semantic colours carry the hues the
+// spec fixes for them.
+
+/** The middle of the generator's own UI saturation band (15–65). */
+const NEUTRAL_UI_SATURATION = 40
+/** The middle of the generator's own syntax saturation band (20–65). */
+const NEUTRAL_SYNTAX_SATURATION = 42
+/** The middle of the generator's own ANSI saturation band (20–70). */
+const NEUTRAL_ANSI_SATURATION = 45
+/** The middle of the generator's own ANSI lightness band (30–60). */
+const NEUTRAL_ANSI_LIGHTNESS = 45
+/** The roll every jitter resolves against: the middle of [0, 1). */
+const NEUTRAL_ROLL = 0.5
+/** The hue a neutral accent falls back to when the file names none. */
+const NEUTRAL_ACCENT_HUE = 210
+
+const clamp = (value: number, min = 0, max = 100): number =>
+  Math.max(min, Math.min(max, value))
+
+/** An HSL colour as the app writes them: `#RRGGBB`, upper case. */
+function hsl(hue: number, saturation: number, lightness: number): string {
+  return Color.hsl(((hue % 360) + 360) % 360, clamp(saturation), clamp(lightness))
+    .hex()
+    .toUpperCase()
+}
+
+/**
+ * The hue the neutral speaks in: the file's own accent when it has one, else the
+ * background's own hue when the background is tinted, else the app's accent hue. A
+ * grey background has no hue of its own, so it borrows one rather than inventing red.
+ */
+function neutralHue(mapped: Partial<UIColors>, bgHue: number, bgSaturation: number): number {
+  for (const key of ['AC1', 'AC2'] as const) {
+    const value = mapped[key]
+    if (value === undefined) continue
+    const accent = Color(value)
+    if (accent.saturationl() >= 8) return accent.hue()
+  }
+  if (bgSaturation >= 8) return bgHue
+  return NEUTRAL_ACCENT_HUE
+}
+
+/**
+ * A complete palette derived from one background colour — the neutral a foreign file's
+ * missing keys are filled from.
+ *
+ * `mapped` is the palette the file *does* supply; it is consulted for the accent hue
+ * only, so a file that names an accent keeps its own accent in the neutral too.
+ */
+export function neutralPaletteFrom(bg1: string, mapped: Partial<UIColors> = {}): ThemePalette {
+  const base = Color(bg1)
+  const isDark = base.isDark()
+  // The background's own lightness is the base the surfaces step off; the foreground
+  // base is its mirror, so the text lands at the far pole of the same polarity.
+  const bgBase = base.lightness()
+  const fgBase = 100 - bgBase
+  const bgHue = base.hue()
+  const bgSaturation = base.saturationl()
+  const accentHue = neutralHue(mapped, bgHue, bgSaturation)
 
   const ui = {} as UIColors
   for (const key of UI_KEYS) {
-    let color: string | null = null
-    for (const source of UI_SOURCES[key]) {
-      color = colorAt(colors, source)
-      if (color !== null) break
-    }
-    ui[key] = color ?? filled.ui[key]
+    const spec = uiSpec[key]
+    const expr = isDark ? spec.lightness.dark : spec.lightness.light
+    const lightness = resolveLightnessExpr(expr, { bgBase, fgBase }, NEUTRAL_ROLL)
+    const hueExpr = spec.hue
+    const keyHue = hueExpr.kind === 'fixed'
+      ? hueExpr.h
+      : key === 'AC1'
+        ? accentHue
+        : key === 'AC2'
+          ? accentHue + 30
+          : bgHue
+    // The surfaces keep the background's own tint; everything else follows the app's
+    // own saturation relationships.
+    const surface =
+      key === 'BG2' ||
+      key === 'BG3' ||
+      key === 'BORDER' ||
+      key === 'lineHighlight' ||
+      key === 'selection' ||
+      key === 'findMatch'
+    const saturation = surface ? bgSaturation : NEUTRAL_UI_SATURATION * spec.sat
+    ui[key] = hsl(keyHue, saturation, lightness)
   }
+  // The background is the file's own, not the neutral's.
+  ui.BG1 = bg1
 
   const syntax = {} as SyntaxColors
+  const syntaxBase = isDark ? SYNTAX_LIGHTNESS.dark : SYNTAX_LIGHTNESS.light
   for (const key of SYNTAX_KEYS) {
-    syntax[key] = tokenColorAt(tokenColors, SYNTAX_SCOPES[key]) ?? filled.syntax[key]
+    const spec = syntaxSpec[key]
+    const shift = resolveDrawable(NEUTRAL_ROLL, spec.lightShift)
+    const hueShift = resolveDrawable(NEUTRAL_ROLL, spec.hueShift)
+    const lightness = spec.inverseLightness
+      ? syntaxBase.inverse - shift
+      : syntaxBase.base + shift
+    syntax[key] = hsl(
+      accentHue + hueShift,
+      NEUTRAL_SYNTAX_SATURATION * spec.sat,
+      lightness
+    )
   }
 
   const ansi = {} as AnsiColors
   for (const key of ANSI_KEYS) {
-    ansi[key] = colorAt(colors, ANSI_SOURCES[key]) ?? filled.ansi[key]
+    const recipe = ansiSpec[key].recipe
+    switch (recipe.kind) {
+      case 'literal':
+        ansi[key] = recipe.value.toUpperCase()
+        break
+      case 'spun':
+        ansi[key] = hsl(recipe.hue, NEUTRAL_ANSI_SATURATION, NEUTRAL_ANSI_LIGHTNESS)
+        break
+      case 'hsl':
+        // The recipe's second number is a span, not a bound: the mid-point of the span
+        // is the generator's own "no roll" value.
+        ansi[key] = hsl(
+          recipe.h[0] + recipe.h[1] / 2,
+          recipe.s[0] + recipe.s[1] / 2,
+          recipe.l[0] + recipe.l[1] / 2
+        )
+        break
+      case 'spunBright': {
+        const from = Color(ansi[recipe.base])
+        ansi[key] = from
+          .saturationl(Math.min(from.saturationl() + 20, 100))
+          .lightness(Math.min(from.lightness() + 20, 95))
+          .hex()
+          .toUpperCase()
+        break
+      }
+    }
+  }
+
+  return { ui, syntax, ansi }
+}
+
+/**
+ * The palette of a foreign file: what the file says, and the neutral for everything it
+ * does not.
+ *
+ * Self-contained by construction (spec §6.2): the only inputs are the file and its own
+ * background. The theme that happens to be open is not consulted, so the same file
+ * always imports to the same palette.
+ *
+ * The readability pass is the generator's own, against the imported background: a
+ * foreign theme whose foreground is invisible on its own background is corrected
+ * rather than imported unreadable.
+ */
+export function paletteOnlyPalette(raw: JsonObject): ThemePalette {
+  const colors = isObject(raw.colors) ? raw.colors : {}
+  const tokenColors: unknown[] = Array.isArray(raw.tokenColors) ? raw.tokenColors : []
+  const mappedUi = mapForeignColors(stringColors(colors))
+  const bg1 = mappedUi.BG1 ?? uiSpec.BG1.initial
+  const neutral = neutralPaletteFrom(bg1, mappedUi)
+
+  const ui = { ...neutral.ui, ...mappedUi }
+  const syntax = { ...neutral.syntax, ...mapForeignSyntax(tokenColors) }
+  const ansi = { ...neutral.ansi, ...mapForeignAnsi(colors) }
+
+  const isDark = Color(bg1).isDark()
+  for (const key of UI_KEYS) {
+    const policy = uiSpec[key].readability
+    if (policy.kind === 'none') continue
+    ui[key] = applyReadability(ui[key], bg1, policy, isDark).toUpperCase()
+  }
+  for (const key of SYNTAX_KEYS) {
+    syntax[key] = applyReadability(
+      syntax[key],
+      bg1,
+      syntaxSpec[key].readability,
+      isDark
+    ).toUpperCase()
+  }
+  for (const key of ANSI_KEYS) {
+    if (!ansiSpec[key].readable) continue
+    ansi[key] = ensureReadability(ansi[key], bg1, 4.5).toUpperCase()
   }
 
   return { ui, syntax, ansi }
@@ -446,12 +694,11 @@ function recordFromPalette(
   raw: JsonObject,
   fileName: string,
   existing: readonly SavedTheme[],
-  fallback: ThemePalette | undefined,
   now: number,
   hash: string,
   meta: JsonObject | null
 ): SavedTheme | null {
-  const palette = foreignPaletteFrom(raw, fallback)
+  const palette = paletteOnlyPalette(raw)
   const candidate: SavedTheme = {
     schemaVersion: SCHEMA_VERSION,
     id: newThemeId(),
@@ -550,11 +797,12 @@ function buildRecord(
     }
 
     // No block, or a block that did not validate: the file's colours are still a theme.
+    // The palette route never consults the open theme — a foreign record is
+    // self-contained (spec §6.2).
     const fromPalette = recordFromPalette(
       read.raw,
       fileName,
       existing,
-      fallback,
       now,
       read.hash,
       meta
@@ -578,8 +826,10 @@ function buildRecord(
  * Read a theme file. A file whose colours match a saved theme is a `duplicate`; anything
  * else becomes a `theme` record with a name that does not collide.
  *
- * `fallback` supplies the palette keys a foreign file leaves out — pass the current
- * theme's palette. Without it the app's spec defaults are used.
+ * `fallback` fills a *locked* key a file carrying an `x-themegen` block does not spell
+ * out — the block's own inputs regenerate everything else. A file with no block is a
+ * foreign theme, and its palette never consults the fallback: it is self-contained
+ * (spec §6.2), so the same file always imports to the same colours.
  */
 export async function parseImport(
   fileName: string,

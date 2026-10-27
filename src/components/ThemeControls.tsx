@@ -100,7 +100,16 @@ const ThemeControls: React.FC<ThemeControlsProps> = ({ compact = false }) => {
     canUndo,
     canRedo,
     saveState,
+    themes,
+    themeId,
   } = useTheme()
+
+  // A palette-only theme — a foreign import — carries colours, not generator settings.
+  // It cannot be regenerated, so the buttons that say otherwise must not pretend it can:
+  // both of them re-resolve the whole palette from the inputs, which would replace the
+  // imported colours with generated ones. (The Randomize buttons are left alone: they
+  // honestly say they generate a *new* theme.)
+  const paletteOnly = themes.find((theme) => theme.id === themeId)?.paletteOnly === true
 
   // There is no mount-time randomize any more: the provider bootstraps a full theme
   // synchronously, so the first paint is already a generated palette rather than the
@@ -137,14 +146,22 @@ const ThemeControls: React.FC<ThemeControlsProps> = ({ compact = false }) => {
       label: 'Regenerate Unlocked',
       icon: <IconRefresh size={16} />,
       onClick: regenerateUnlocked,
-      hint: 'Slightly adjust the current theme, keeping locked colors unchanged',
+      disabled: paletteOnly,
+      hint: paletteOnly
+        ? 'This theme was imported from a file: it carries colours, not generator settings, ' +
+          'so there is nothing to regenerate.'
+        : 'Slightly adjust the current theme, keeping locked colors unchanged',
     },
     {
       key: 'regenerate-ansi',
       label: 'Regenerate ANSI Colors',
       icon: <IconTerminal2 size={16} />,
       onClick: regenerateAnsiColors,
-      hint: 'Regenerate terminal colors based on the current theme',
+      disabled: paletteOnly,
+      hint: paletteOnly
+        ? 'This theme was imported from a file: its terminal colours came from the file, ' +
+          'so there is nothing to regenerate.'
+        : 'Regenerate terminal colors based on the current theme',
     },
   ]
 
@@ -360,6 +377,7 @@ const ThemeControls: React.FC<ThemeControlsProps> = ({ compact = false }) => {
                   data-action={action.key}
                   aria-label={action.label}
                   title={action.label}
+                  disabled={action.disabled}
                   onClick={action.onClick}
                 >
                   {compact ? action.icon : action.label}
