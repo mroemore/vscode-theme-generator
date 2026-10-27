@@ -467,6 +467,10 @@ Do **not** run `bun run build` while `next dev` is live on 3100 — they share `
 
 Each milestone ends with the gates green, its own probe passing, and a commit.
 
+**Final state (L1–L4 landed):** `tsc` clean · `lint` clean · parity **680 / 0 changed** · `phase-b` ALL PASSED · `check` 129/0 · `probe-mobile` 208/0 · `probe-shadow` 10/0 · `probe-library` 68/0 · `probe-undo` 87/0 · `probe-import` 86/0 · the nine pure `themes-*` harnesses exit 0.
+
+**Durability rule learned in L4:** a measurement taken on a dirty working tree is not evidence. The first review of the foreign mapping reported a freeze on a mid-tone background, the orchestrator measured the symptom against a tree that already carried the in-flight fix and wrongly called it a false positive, and the freeze was real at the reviewed commit (`editor.background` `#808080` / `#828282` never returned; `#7C7C7C` / `#909090` were fine). `adjustCommentColor`'s ±20% walk could straddle the comment band for ever on a mid-tone background — now a 64-step budget plus a colour-state cycle guard, with a fixed-iteration bisection over lightness when the walk cannot answer and the closest achievable colour when the band is unreachable. The in-band walk is untouched, so the corpus did not move.
+
 ---
 
 ## 12. Milestones
