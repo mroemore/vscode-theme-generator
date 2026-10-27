@@ -279,8 +279,13 @@ export function writeTheme(
 }
 
 /** Remove the theme record and its history (design §4.4: deleting clears history). */
-export function removeTheme(id: string, store: Resolved = browserStore()): void {
+export function removeTheme(id: string, store = browserStore()): void {
   safeRemove(store, themeKey(id))
+  safeRemove(store, historyKey(id))
+}
+
+/** Remove one theme's history key, leaving the record alone. */
+export function removeHistory(id: string, store: Resolved = browserStore()): void {
   safeRemove(store, historyKey(id))
 }
 
@@ -423,10 +428,11 @@ export function pruneToBudget(
     ...index.order.filter((id) => id === protectId),
   ]
 
-  // Snapshot the step counts so the loop is bounded and re-serialisation is done once.
-  const stepsById = new Map<string, History['steps']>()
+  // Snapshot each history whole — cursor with it — so the loop is bounded and
+  // re-serialisation is done once.
+  const histories = new Map<string, History>()
   for (const id of othersFirst) {
-    stepsById.set(id, readHistory(id, store).steps)
+    histories.set(id, readHistory(id, store))
   }
 
   let progress = true
@@ -434,14 +440,19 @@ export function pruneToBudget(
     progress = false
     for (const id of othersFirst) {
       if (total <= HISTORY_BUDGET_BYTES) break
-      const steps = stepsById.get(id)
-      if (steps === undefined || steps.length === 0) continue
+      const history = histories.get(id)
+      if (history === undefined || history.steps.length === 0) continue
 
-      // Drop the oldest step and re-serialise.
-      steps.shift()
+      // Drop the oldest step. That step is the oldest *applied* one (the cursor counts
+      // steps applied), so the cursor follows it down: `max(0, old - 1)`, never
+      // `steps.length` — a history whose redo tail lives mid-stack must keep being able
+      // to say what it has not applied (fix 2, 2026-10-26 round).
+      const value = serialiseHistory({
+        cursor: Math.max(0, history.cursor - 1),
+        steps: history.steps.slice(1),
+      })
+      histories.set(id, { cursor: Math.max(0, history.cursor - 1), steps: history.steps.slice(1) })
       progress = true
-      const cursor = steps.length
-      const value = serialiseHistory({ cursor, steps })
       const key = historyKey(id)
       const raw = safeGet(store, key)
       const before = raw === null ? 0 : bytesOf(raw)

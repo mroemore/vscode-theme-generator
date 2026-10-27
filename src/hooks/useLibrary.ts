@@ -58,6 +58,13 @@ export const SAVE_DEBOUNCE_MS = 400
 
 const EMPTY_LIBRARY_MESSAGE = 'Storage full — delete a theme or clear history'
 
+/**
+ * A refused *history* write, not a refused record save. The chip must keep saying the
+ * record is saved — claiming it was not is the one lie this indicator exists to avoid —
+ * so this reaches only `lastError` and the library strip, never the chip.
+ */
+const HISTORY_REFUSED_MESSAGE = 'Storage full \u2014 this theme\u2019s undo history was not saved'
+
 /** A newer app version's library: readable by it alone, so this version must not write. */
 const READ_ONLY_MESSAGE = 'This library was saved by a newer version — read only'
 
@@ -135,13 +142,19 @@ function recordFor(
   createdAt: number,
   updatedAt: number
 ): SavedTheme {
-  const inputs = inputsOf(state)
+  // A palette-only theme carries colours, not generator settings: no `inputs` is
+  // computed and no metadata block is written, so the hash describes the colours
+  // only (the file is what a foreign export is, round trip included) and the
+  // record's `inputs` stays undefined — the row keeps its palette badge. Only a
+  // generator control converts a theme (`ThemeState.paletteOnly` → false).
+  const paletteOnly = state.paletteOnly === true
+  const inputs = paletteOnly ? undefined : inputsOf(state)
   const exported = generateThemeJSON(
     state.colors,
     state.syntaxColors,
     state.ansiColors,
     name,
-    metadataFor(inputs, state.lockedColors, state.links)
+    inputs === undefined ? undefined : metadataFor(inputs, state.lockedColors, state.links)
   )
   const hash = propsHash(JSON.parse(exported) as object)
   return toRecord(state, { id, name, createdAt, updatedAt, propsHash: hash })
@@ -188,6 +201,14 @@ export interface LibraryController {
   renameRecord: (id: string, name: string) => boolean
   /** Remove a record and its history, repairing `currentId`/`order`. */
   deleteRecord: (id: string) => { wasCurrent: boolean; nextId: string | null }
+  /**
+   * Surface a refused *history* write through `lastError` (the library strip). Not
+   * through `saveError`: a refused history write means the record itself saved — only
+   * its undo history did not — and `saveError` drives the saved chip into "Not saved",
+   * which would state that lie. The history controller has no library of its own; this
+   * is how it reports.
+   */
+  reportHistoryRefused: () => void
 }
 
 export function useLibrary(): LibraryController {
@@ -506,6 +527,14 @@ export function useLibrary(): LibraryController {
     [adoptCurrent]
   )
 
+  const reportHistoryRefused = useCallback(() => {
+    // The record save and the history write are separate writes: a history refusal
+    // means the record is on disk. Setting `saveError` here would flip the chip to
+    // "Not saved" while the record is saved — the exact lie the two-state split avoids.
+    // The library strip (`lastError`) carries the why instead.
+    setLastError(HISTORY_REFUSED_MESSAGE)
+  }, [])
+
   return {
     libraryLoaded,
     themes,
@@ -527,5 +556,6 @@ export function useLibrary(): LibraryController {
     addRecord,
     renameRecord,
     deleteRecord,
+    reportHistoryRefused,
   }
 }

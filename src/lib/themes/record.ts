@@ -13,7 +13,8 @@
 
 import type { Links } from '@/lib/colors/links'
 import { canonicalString } from '@/lib/themes/canonical'
-import { resolvePalette } from '@/lib/themes/resolve'
+import { foreignInputs } from '@/lib/themes/foreign'
+import { relinkPalette, resolvePalette } from '@/lib/themes/resolve'
 import { SCHEMA_VERSION } from '@/lib/themes/schema'
 import type {
   SavedTheme,
@@ -39,6 +40,13 @@ export interface ThemeStateLike {
   ansiColors: AnsiColors
   links: Links
   lockedColors: ReadonlySet<string>
+  /**
+   * True for a foreign (palette-only) theme: the record keeps `inputs === undefined`
+   * and no `x-themegen` block is written, possibly after colour edits, until the user
+   * deliberately converts it with a generator control. Optional so older callers that
+   * predate the flag read as generated.
+   */
+  paletteOnly?: boolean
 }
 
 export interface RecordMeta {
@@ -67,19 +75,25 @@ export function pureOf(
 
 /** Assemble a {@link SavedTheme} from the live theme state and its library metadata. */
 export function toRecord(s: ThemeStateLike, meta: RecordMeta): SavedTheme {
-  const inputs: ThemeInputs = {
-    isDark: s.isDark,
-    baseHue: s.baseHue,
-    scheme: s.scheme,
-    uiSaturation: s.uiSaturation,
-    syntaxSaturation: s.syntaxSaturation,
-    assignment: s.assignment,
-  }
+  // A palette-only theme carries no inputs anywhere: the record stays `inputs ===
+  // undefined` and its `purePalette` is the palette itself, exactly the shape the
+  // importer builds (a colour edit on a foreign theme must not convert it).
+  const paletteOnly = s.paletteOnly === true
   const palette: ThemePalette = {
     ui: s.colors,
     syntax: s.baseSyntaxColors,
     ansi: s.baseAnsiColors,
   }
+  const inputs: ThemeInputs | undefined = paletteOnly
+    ? undefined
+    : {
+        isDark: s.isDark,
+        baseHue: s.baseHue,
+        scheme: s.scheme,
+        uiSaturation: s.uiSaturation,
+        syntaxSaturation: s.syntaxSaturation,
+        assignment: s.assignment,
+      }
   const locks = [...s.lockedColors]
   return {
     schemaVersion: SCHEMA_VERSION,
@@ -87,9 +101,12 @@ export function toRecord(s: ThemeStateLike, meta: RecordMeta): SavedTheme {
     name: meta.name,
     createdAt: meta.createdAt,
     updatedAt: meta.updatedAt,
-    inputs,
+    ...(inputs === undefined ? {} : { inputs }),
     palette,
-    purePalette: pureOf(inputs, s.lockedColors, palette),
+    purePalette:
+      inputs === undefined
+        ? { ui: { ...palette.ui }, syntax: { ...palette.syntax }, ansi: { ...palette.ansi } }
+        : pureOf(inputs, s.lockedColors, palette),
     locks,
     links: s.links,
     propsHash: meta.propsHash,
@@ -178,6 +195,31 @@ export function openRecord(record: SavedTheme): {
     links: record.links,
     locks,
   }
+}
+
+/**
+ * The palette a record shows on screen: the stored (pre-link) bases with the record's
+ * links applied. `isDark` comes from the record's inputs, or — on a palette-only
+ * record — from the background the importer itself judged when it built the record.
+ *
+ * The catalogue row's export uses this so its bytes match the main Export button's
+ * (rest of the round tracked as fix 4): the main button exports the live *displayed*
+ * palettes, so a row with links exported the pre-link bases and the two files' bytes
+ * disagreed about exactly the themes that had links.
+ */
+export function displayedPalette(record: SavedTheme): ThemePalette {
+  const isDark =
+    record.inputs === undefined
+      ? foreignInputs(record.palette.ui.BG1).isDark
+      : record.inputs.isDark
+  const { syntax, ansi } = relinkPalette({
+    colors: record.palette.ui,
+    baseSyntax: record.palette.syntax,
+    baseAnsi: record.palette.ansi,
+    links: record.links,
+    isDark,
+  })
+  return { ui: record.palette.ui, syntax, ansi }
 }
 
 /**

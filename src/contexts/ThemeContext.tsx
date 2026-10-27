@@ -19,6 +19,7 @@ import { pickLocked, relinkPalette, resolvePalette } from '@/lib/themes/resolve'
 import { applyPatch } from '@/lib/themes/diff'
 import type { ThemePatch } from '@/lib/themes/diff'
 import { isUnchanged, openRecord } from '@/lib/themes/record'
+import { foreignInputs } from '@/lib/themes/foreign'
 import { MAX_IMPORT_BYTES, parseImport, parseImportAsNew } from '@/lib/themes/importer'
 import type { ImportResult } from '@/lib/themes/importer'
 import { useLibrary } from '@/hooks/useLibrary'
@@ -74,6 +75,12 @@ interface ThemeState {
   ansiColors: AnsiColors
   links: Links
   lockedColors: Set<string>
+  /**
+   * True while the open theme is foreign (palette-only): the record keeps
+   * `inputs === undefined`, no `x-themegen` block is written, and only a generator
+   * control converts it (fix 1, 2026-10-26 round).
+   */
+  paletteOnly: boolean
 }
 
 interface ThemeContextType {
@@ -84,6 +91,8 @@ interface ThemeContextType {
   scheme: ColorScheme
   /** The open theme's inputs, for the export metadata block. */
   inputs: ThemeInputs
+  /** False when the open theme is a foreign (palette-only) record. */
+  paletteOnly: boolean
   poolMode: PoolMode
   seed: number
   colors: UIColors
@@ -271,6 +280,8 @@ function bootstrap(isDark: boolean, seed: number): ThemeState {
     ansiColors: {} as AnsiColors,
     links: {},
     lockedColors: new Set(),
+    // A bootstrap theme is the generator's own product.
+    paletteOnly: false,
   }
   return relink(resolveAll(base))
 }
@@ -306,6 +317,7 @@ export const ThemeProvider: React.FC<{
     addRecord,
     renameRecord,
     deleteRecord,
+    reportHistoryRefused,
   } = useLibrary()
 
   const [activeColor, setActiveColor] = useState<string | null>(null)
@@ -357,7 +369,15 @@ export const ThemeProvider: React.FC<{
     canUndo,
     canRedo,
     clearHistory,
-  } = useHistory({ themeId, snapshot: snapshotTheme, restore: restoreSnapshot })
+    forgetTheme,
+  } = useHistory({
+    themeId,
+    snapshot: snapshotTheme,
+    restore: restoreSnapshot,
+    // A refused history write goes to the same channel a refused record save uses, so
+    // "saved" never means "the history of that save is silently missing its last step".
+    reportRefused: reportHistoryRefused,
+  })
 
   const commit = useCallback(
     (mutate: (s: ThemeState) => ThemeState, opts: CommitOptions = {}) => {
@@ -406,20 +426,21 @@ export const ThemeProvider: React.FC<{
     // stale anchor from spanning the adoption into the next edit.
     endGesture()
     const live = stateRef.current as ThemeState
+    // The header the theme shows. A generated record owns its six inputs; a foreign
+    // (palette-only) record's mode and base hue are read off the *imported background
+    // itself*, so the sliders do not describe the theme that was open before (fix 1,
+    // 2026-10-26 round). The saturations and the assignment cannot honestly be
+    // synthesised from colours alone, so a foreign theme keeps what it had — and while
+    // `paletteOnly` is true they are written nowhere (no metadata block, no record
+    // `inputs`), which is also what keeps `setTheme` and the mode toggle honest for
+    // foreign records, where the old code skipped telling next-themes entirely.
     const inputs = open.inputs
+    const { isDark, baseHue } = inputs ?? foreignInputs(open.palette.ui.BG1)
     const base: ThemeState = {
       ...live,
-      // A foreign (palette-only) record has no inputs; its palette is adopted verbatim.
-      ...(inputs === undefined
-        ? {}
-        : {
-            isDark: inputs.isDark,
-            baseHue: inputs.baseHue,
-            uiSaturation: inputs.uiSaturation,
-            syntaxSaturation: inputs.syntaxSaturation,
-            scheme: inputs.scheme,
-            assignment: inputs.assignment,
-          }),
+      isDark,
+      baseHue,
+      ...(inputs ?? {}),
       colors: open.palette.ui,
       baseSyntaxColors: open.palette.syntax,
       baseAnsiColors: open.palette.ansi,
@@ -427,6 +448,7 @@ export const ThemeProvider: React.FC<{
       ansiColors: open.palette.ansi,
       links: open.links,
       lockedColors: new Set(open.locks),
+      paletteOnly: inputs === undefined,
     }
     stateRef.current = relink(base)
     setVersion((v) => v + 1)
@@ -457,7 +479,11 @@ export const ThemeProvider: React.FC<{
     if (record !== null) {
       const open = openRecord(record)
       adoptOpenTheme(open)
-      if (open.inputs !== undefined) setTheme(open.inputs.isDark ? 'dark' : 'light')
+      // The state's `isDark` is the record's own (a foreign record's comes from its
+      // imported background, via `adoptOpenTheme`), so telling next-themes unconditionally
+      // is honest for foreign records too — the old code skipped them and left the
+      // document in the previous theme's mode.
+      setTheme((stateRef.current as ThemeState).isDark ? 'dark' : 'light')
       adoptCurrent({ id: record.id, name: record.name, createdAt: record.createdAt })
       writeCurrentId(record.id)
       // Saved once — but only if something changed. `openRecord` re-resolves the record,
@@ -494,32 +520,43 @@ export const ThemeProvider: React.FC<{
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [linkingSource])
 
+  // ── Generator controls, and the one-way conversion ──────────────────────────
+  // A palette-only theme is a real theme: exports and saves treat it as colour-only.
+  // The moment shown on screen as `imported-palette-note` — a generator control that
+  // re-resolves the palette from the inputs — is the conversion moment (fix 1). Every
+  // setter below is such a control; colour edits (hex, lock, link) are not and must
+  // not flip the flag.
+
+  /** A generator control ran: from here the theme owns honest generator inputs. */
+  const generated = (s: ThemeState): ThemeState =>
+    s.paletteOnly ? { ...s, paletteOnly: false } : s
+
   const setIsDark = (value: boolean) => {
     setTheme(value ? 'dark' : 'light')
-    commitResolved((s) => ({ ...s, isDark: value }))
+    commitResolved((s) => ({ ...generated(s), isDark: value }))
   }
 
   // Assignment kept: hue is a rotation, so the palette moves as a whole and every
   // colour keeps its relationship to every other.
   const setBaseHue = (value: number) =>
-    commitResolved((s) => ({ ...s, baseHue: value }))
+    commitResolved((s) => ({ ...generated(s), baseHue: value }))
 
   const setScheme = (value: ColorScheme) =>
-    commitResolved((s) => ({ ...s, scheme: value }))
+    commitResolved((s) => ({ ...generated(s), scheme: value }))
 
   // The saturation sliders scale the colours that are on screen rather than re-resolving,
   // which is what preserves hand-edited hues and the per-key lightness spread. They act
   // on the *bases*; a linked target's display is re-derived from its source by `commit`.
   const setUiSaturation = (value: number) =>
     commit((s) => ({
-      ...s,
+      ...generated(s),
       uiSaturation: value,
       colors: updateThemeColorsWithSaturation(s.colors, value, s.lockedColors),
     }))
 
   const setSyntaxSaturation = (value: number) =>
     commit((s) => ({
-      ...s,
+      ...generated(s),
       syntaxSaturation: value,
       baseSyntaxColors: updateSyntaxColorsWithSaturation(
         s.baseSyntaxColors,
@@ -533,14 +570,14 @@ export const ThemeProvider: React.FC<{
   const randomizeTheme = (poolMode: PoolMode) =>
     commitResolved((s) => {
       const theme = drawTheme(randomSeed(), poolMode, SCHEMES)
-      return {
+      return generated({
         ...s,
         baseHue: theme.baseHue,
         uiSaturation: theme.uiSaturation,
         syntaxSaturation: theme.syntaxSaturation,
         scheme: theme.scheme,
         assignment: theme.assignment,
-      }
+      })
     })
 
   /** Nudge hue and saturation, keep every relationship. Locks are carried through. */
@@ -715,9 +752,12 @@ export const ThemeProvider: React.FC<{
       }
       const open = openRecord(record)
       adoptOpenTheme(open)
-      // Without this, next-themes re-commits the system-resolved mode a tick later and
-      // the adopted light/dark choice is immediately undone.
-      if (open.inputs !== undefined) setTheme(open.inputs.isDark ? 'dark' : 'light')
+      // Tell next-themes the open theme's own polarity. The state's `isDark` is the
+      // record's, or — on a foreign record — the polarity read off the imported
+      // background (`adoptOpenTheme`); without this, next-themes re-commits the
+      // system-resolved mode a tick later and the adopted choice is immediately undone,
+      // and a foreign record stayed in the mode of the theme that was open before.
+      setTheme((stateRef.current as ThemeState).isDark ? 'dark' : 'light')
       adoptCurrent({ id: record.id, name: record.name, createdAt: record.createdAt })
       writeCurrentId(record.id)
       // One write so the reopened (possibly re-resolved) palette is what reloads next.
@@ -837,12 +877,17 @@ export const ThemeProvider: React.FC<{
   const deleteTheme = useCallback(
     (id: string) => {
       flush()
+      // The history controller may still hold a write for this id inside its 400 ms
+      // debounce. Forget it before the keys go: once the record is gone nothing may
+      // re-create `vsc_themegen.history.v1.<id>` — that one orphan was invisible to the
+      // catalogue and grew without bound (fix 3, 2026-10-26 round).
+      forgetTheme(id)
       const { wasCurrent, nextId } = deleteRecord(id)
       if (!wasCurrent) return
       if (nextId !== null) openTheme(nextId)
       else newTheme()
     },
-    [flush, deleteRecord, openTheme, newTheme]
+    [flush, forgetTheme, deleteRecord, openTheme, newTheme]
   )
 
   const s = stateRef.current as ThemeState
@@ -859,6 +904,7 @@ export const ThemeProvider: React.FC<{
     syntaxSaturation: s.syntaxSaturation,
     scheme: s.scheme,
     inputs: toInputs(s),
+    paletteOnly: s.paletteOnly,
     poolMode: s.assignment.poolMode,
     seed: s.assignment.seed,
     colors: s.colors,

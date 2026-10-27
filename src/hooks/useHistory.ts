@@ -34,7 +34,7 @@ import {
   undoStep,
 } from '@/lib/themes/diff'
 import type { History, PatchableState, ThemePatch } from '@/lib/themes/diff'
-import { readHistory, writeHistory } from '@/lib/themes/storage'
+import { readHistory, removeHistory, writeHistory } from '@/lib/themes/storage'
 import { useGestureBoundary } from '@/hooks/useGestureBoundary'
 
 /** Trailing debounce for a history write: a drag lands once, at the end of the gesture. */
@@ -53,6 +53,14 @@ export interface HistoryOptions {
    * the record and switches the document mode when the patch touches `isDark`.
    */
   restore: (patch: ThemePatch) => void
+  /**
+   * Called when a history write lands nowhere (quota exhaustion, private mode, a store
+   * that throws). Routes to the library's `lastError` strip — never the saved chip,
+   * which would lie "Not saved" about a record that *did* save (fix A, 2026-10-26
+   * round). A history write that failed while the record save succeeded is visible, not
+   * silent.
+   */
+  reportRefused?: () => void
 }
 
 export interface HistoryController {
@@ -74,6 +82,13 @@ export interface HistoryController {
   canRedo: boolean
   /** Drop the current theme's history, immediately on disk. */
   clearHistory: () => void
+  /**
+   * Forget one theme's history for good: cancel its armed write, drop its pending
+   * payload, and remove its stored key. The delete path calls this after removing the
+   * record, so the 400 ms debounce can never re-write a history whose record is gone
+   * (that orphan was invisible to the catalogue and grew without bound).
+   */
+  forgetTheme: (id: string) => void
 }
 
 /** Ctrl/Cmd+Z etc. must be left to the browser while the user is typing. */
@@ -149,7 +164,12 @@ function repaired(history: History): { history: History; changed: boolean } {
   return { history: { cursor: Math.max(0, next), steps }, changed: true }
 }
 
-export function useHistory({ themeId, snapshot, restore }: HistoryOptions): HistoryController {
+export function useHistory({
+  themeId,
+  snapshot,
+  restore,
+  reportRefused,
+}: HistoryOptions): HistoryController {
   const [, setVersion] = useState(0)
   const bump = useCallback(() => setVersion((v) => v + 1), [])
 
@@ -166,6 +186,14 @@ export function useHistory({ themeId, snapshot, restore }: HistoryOptions): Hist
   const pendingWrite = useRef<{ id: string; history: History } | null>(null)
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
+  /** One write with its refusal surfaced through the library's `lastError` strip. */
+  const writeNow = useCallback(
+    (id: string, history: History) => {
+      if (writeHistory(id, history) !== 'ok') reportRefused?.()
+    },
+    [reportRefused]
+  )
+
   const flushWrite = useCallback(() => {
     if (timerRef.current !== null) {
       clearTimeout(timerRef.current)
@@ -173,8 +201,8 @@ export function useHistory({ themeId, snapshot, restore }: HistoryOptions): Hist
     }
     const pending = pendingWrite.current
     pendingWrite.current = null
-    if (pending !== null) writeHistory(pending.id, pending.history)
-  }, [])
+    if (pending !== null) writeNow(pending.id, pending.history)
+  }, [writeNow])
 
   const queueWrite = useCallback((history: History) => {
     const id = idRef.current
@@ -185,8 +213,24 @@ export function useHistory({ themeId, snapshot, restore }: HistoryOptions): Hist
       timerRef.current = null
       const pending = pendingWrite.current
       pendingWrite.current = null
-      if (pending !== null) writeHistory(pending.id, pending.history)
+      if (pending !== null) writeNow(pending.id, pending.history)
     }, HISTORY_WRITE_DEBOUNCE_MS)
+  }, [writeNow])
+
+  /**
+   * Forget one theme's history: cancel the write waiting for it, drop the payload, and
+   * clear whatever key it still holds. Called by the delete path right after the record
+   * is removed — once the key is gone nothing in this hook may put bytes back under it.
+   */
+  const forgetTheme = useCallback((id: string) => {
+    if (pendingWrite.current !== null && pendingWrite.current.id === id) {
+      pendingWrite.current = null
+      if (timerRef.current !== null) {
+        clearTimeout(timerRef.current)
+        timerRef.current = null
+      }
+    }
+    removeHistory(id)
   }, [])
 
   /** Adopt a stack as the current one and persist it. */
@@ -310,8 +354,8 @@ export function useHistory({ themeId, snapshot, restore }: HistoryOptions): Hist
     historyRef.current = emptyHistory()
     bump()
     const id = idRef.current
-    if (id !== null) writeHistory(id, emptyHistory())
-  }, [bump, endGesture])
+    if (id !== null) writeNow(id, emptyHistory())
+  }, [bump, endGesture, writeNow])
 
   // Load the open theme's stack. A read, never a write: the history that was on disk is
   // the history that comes back, with the same cursor, and no step is created here.
@@ -334,8 +378,8 @@ export function useHistory({ themeId, snapshot, restore }: HistoryOptions): Hist
     historyRef.current = repair.history
     bump()
     // Only when a step had to be dropped: a healthy history is not rewritten by a reload.
-    if (repair.changed) writeHistory(themeId, repair.history)
-  }, [themeId, bump, flushWrite])
+    if (repair.changed) writeNow(themeId, repair.history)
+  }, [themeId, bump, flushWrite, writeNow])
 
   // A closing tab must not lose the last gesture's step write.
   useEffect(() => {
@@ -377,5 +421,6 @@ export function useHistory({ themeId, snapshot, restore }: HistoryOptions): Hist
     canUndo: history.cursor > 0,
     canRedo: history.cursor < history.steps.length,
     clearHistory,
+    forgetTheme,
   }
 }

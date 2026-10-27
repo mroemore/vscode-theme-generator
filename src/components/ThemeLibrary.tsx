@@ -5,6 +5,7 @@ import { IconFileImport, IconPlus } from '@tabler/icons-react'
 
 import { useTheme } from '@/contexts/ThemeContext'
 import { exportFileName, metadataFor } from '@/lib/themes/exporter'
+import { displayedPalette } from '@/lib/themes/record'
 import { generateThemeJSON } from '@/lib/utils/exportTheme'
 import type { ThemeSummary } from '@/hooks/useLibrary'
 
@@ -275,10 +276,16 @@ const ThemeLibrary: React.FC<ThemeLibraryProps> = ({ compact = false }) => {
       openTheme(theme.id)
       return
     }
+    // The *displayed* palette, not the stored bases: the main Export button exports what
+    // is on screen, and a row's ⤓ is the same download for the same record — the two
+    // used to disagree by the linked keys whenever the record had links (fix 4). The
+    // displayed palettes are derived here, from the stored bases plus the record's
+    // links, because a row is not necessarily the open theme.
+    const displayed = displayedPalette(record)
     const json = generateThemeJSON(
-      record.palette.ui,
-      record.palette.syntax,
-      record.palette.ansi,
+      displayed.ui,
+      displayed.syntax,
+      displayed.ansi,
       record.name,
       record.inputs === undefined
         ? undefined

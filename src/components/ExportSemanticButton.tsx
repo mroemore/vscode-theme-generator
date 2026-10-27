@@ -6,16 +6,25 @@ import { exportFileName, metadataFor } from '@/lib/themes/exporter'
 import { Button } from '@/components/ui/button'
 
 const ExportSemanticButton: React.FC = () => {
-  const { colors, syntaxColors, ansiColors, themeName, inputs, lockedColors, links } =
-    useTheme()
+  const {
+    colors,
+    syntaxColors,
+    ansiColors,
+    themeName,
+    inputs,
+    paletteOnly,
+    lockedColors,
+    links,
+  } = useTheme()
 
   const exportSemanticTheme = () => {
+    // A palette-only theme exports without a metadata block, like a foreign file (fix 1).
     const { themeJSON } = generateSemanticThemeJSON(
       themeName,
       colors,
       syntaxColors,
       ansiColors,
-      metadataFor(inputs, lockedColors, links)
+      paletteOnly ? undefined : metadataFor(inputs, lockedColors, links)
     )
     const blob = new Blob([themeJSON], { type: 'application/json' })
     const url = URL.createObjectURL(blob)

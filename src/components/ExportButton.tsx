@@ -6,16 +6,27 @@ import { exportFileName, metadataFor } from '@/lib/themes/exporter'
 import { Button } from '@/components/ui/button'
 
 const ExportButton: React.FC = () => {
-  const { colors, syntaxColors, ansiColors, themeName, inputs, lockedColors, links } =
-    useTheme()
+  const {
+    colors,
+    syntaxColors,
+    ansiColors,
+    themeName,
+    inputs,
+    paletteOnly,
+    lockedColors,
+    links,
+  } = useTheme()
 
   const exportTheme = () => {
+    // A palette-only theme carries colours, not generator settings: it exports as a
+    // plain VS Code theme — exactly like a foreign file — so re-importing the file
+    // yields a palette-only record and the round trip holds (fix 1).
     const themeJSON = generateThemeJSON(
       colors,
       syntaxColors,
       ansiColors,
       themeName,
-      metadataFor(inputs, lockedColors, links)
+      paletteOnly ? undefined : metadataFor(inputs, lockedColors, links)
     )
     const blob = new Blob([themeJSON], { type: 'application/json' })
     const url = URL.createObjectURL(blob)
