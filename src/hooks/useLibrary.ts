@@ -155,6 +155,8 @@ export interface LibraryController {
   themeName: string
   lastSavedAt: number | null
   lastError: string | null
+  /** True while a debounced write is outstanding — the saved indicator's "Saving…". */
+  saving: boolean
   /** Debounced write of a live state under the open record. No-op before the read. */
   scheduleSave: (state: ThemeStateLike) => void
   /** Write any pending save immediately. */
@@ -190,6 +192,9 @@ export function useLibrary(): LibraryController {
   const [themeName, setThemeName] = useState('Theme 1')
   const [lastSavedAt, setLastSavedAt] = useState<number | null>(null)
   const [lastError, setLastError] = useState<string | null>(null)
+  // A save is waiting on the debounce. Kept as state, not just as `timerRef`, because the
+  // saved indicator has to say "Saving…" while it is true — a ref would paint nothing.
+  const [saving, setSaving] = useState(false)
 
   // Read inside callbacks that fire outside React's render cycle.
   const loadedRef = useRef(false)
@@ -203,6 +208,7 @@ export function useLibrary(): LibraryController {
       timerRef.current = null
     }
     pendingRef.current = null
+    setSaving(false)
   }, [])
 
   const publish = useCallback((store: ReturnType<typeof browserStore>) => {
@@ -241,6 +247,7 @@ export function useLibrary(): LibraryController {
     const pending = pendingRef.current
     pendingRef.current = null
     if (pending !== null) persist(pending)
+    setSaving(false)
   }, [persist])
 
   const scheduleSave = useCallback(
@@ -250,11 +257,13 @@ export function useLibrary(): LibraryController {
       if (!loadedRef.current || currentRef.current === null) return
       pendingRef.current = state
       if (timerRef.current !== null) clearTimeout(timerRef.current)
+      setSaving(true)
       timerRef.current = setTimeout(() => {
         timerRef.current = null
         const pending = pendingRef.current
         pendingRef.current = null
         if (pending !== null) persist(pending)
+        setSaving(false)
       }, SAVE_DEBOUNCE_MS)
     },
     [persist]
@@ -463,6 +472,7 @@ export function useLibrary(): LibraryController {
     themeName,
     lastSavedAt,
     lastError,
+    saving,
     scheduleSave,
     flush,
     loadCurrent,

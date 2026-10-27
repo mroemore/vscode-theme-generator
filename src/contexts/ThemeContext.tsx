@@ -121,6 +121,13 @@ interface ThemeContextType {
   lastSavedAt: number | null
   /** A non-fatal storage condition (currently quota exhaustion), cleared by the next save. */
   lastError: string | null
+  /**
+   * What the saved indicator may truthfully claim. Derived once, here, so the desktop chip
+   * cannot drift from the library: a pending write is `saving`, a refused one is `error`
+   * (never `saved`), and `unsaved` means nothing has been written yet — which is the
+   * state of an app whose library refused the very first record.
+   */
+  saveState: 'saving' | 'saved' | 'error' | 'unsaved'
   /** False until the index has been read after mount; the catalogue renders a skeleton. */
   libraryLoaded: boolean
   themes: ThemeSummary[]
@@ -283,6 +290,7 @@ export const ThemeProvider: React.FC<{
     themeName,
     lastSavedAt,
     lastError,
+    saving,
     scheduleSave,
     flush,
     loadCurrent,
@@ -876,6 +884,13 @@ export const ThemeProvider: React.FC<{
     themeName,
     lastSavedAt,
     lastError,
+    saveState: saving
+      ? 'saving'
+      : lastError !== null
+        ? 'error'
+        : lastSavedAt !== null
+          ? 'saved'
+          : 'unsaved',
     libraryLoaded,
     themes,
     readTheme: readRecord,

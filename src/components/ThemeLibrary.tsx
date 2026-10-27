@@ -132,6 +132,7 @@ const ThemeLibrary: React.FC<ThemeLibraryProps> = ({ compact = false }) => {
   const {
     themes,
     themeId,
+    themeName,
     libraryLoaded,
     lastError,
     colors,
@@ -141,6 +142,9 @@ const ThemeLibrary: React.FC<ThemeLibraryProps> = ({ compact = false }) => {
     renameTheme,
     deleteTheme,
     readTheme,
+    clearHistory,
+    canUndo,
+    canRedo,
   } = useTheme()
 
   /** The row whose ✎ was pressed, and the text it is holding while it is open. */
@@ -152,6 +156,13 @@ const ThemeLibrary: React.FC<ThemeLibraryProps> = ({ compact = false }) => {
 
   /** The row whose ✕ was pressed and is asking for its one confirmation. */
   const [confirmingId, setConfirmingId] = useState<string | null>(null)
+
+  /**
+   * The catalogue-level *Clear history* is asking its one question. It is not a row action:
+   * history belongs to the open theme, and the catalogue is where that theme is named.
+   */
+  const [clearing, setClearing] = useState(false)
+  const hasHistory = canUndo || canRedo
 
   // Import. The file is kept, not just its parse: "Import as new" re-reads the same bytes
   // without asking for the file again, and the input's value is cleared on every pick so
@@ -203,6 +214,9 @@ const ThemeLibrary: React.FC<ThemeLibraryProps> = ({ compact = false }) => {
     if (themeId === null) return
     const row = listRef.current?.querySelector<HTMLElement>(`[data-theme-id="${themeId}"]`)
     row?.scrollIntoView({ block: 'nearest' })
+    // A pending "clear this theme's history?" belongs to the theme that was open when it was
+    // asked; a switch makes it a question about a different theme, so it is dropped.
+    setClearing(false)
   }, [themeId, themes.length])
 
   const rowHeight = compact ? 48 : 36
@@ -288,31 +302,64 @@ const ThemeLibrary: React.FC<ThemeLibraryProps> = ({ compact = false }) => {
         // accent because it is the action; Import is the quiet secondary beside it. Keeping
         // them here rather than in a heading means New stays one tap away without a second
         // title.
-        <div className="mb-2 flex justify-end" data-testid="theme-actions">
+        //
+        // *Clear history* shares the strip's left edge as a quiet text action: that is the
+        // catalogue's header in this layout, and history belongs to the theme the catalogue
+        // names. It is disabled (as a control, not just dimmed) while there is nothing to
+        // clear — the same rule the undo pair follows.
+        <div className="mb-2 flex items-center justify-between gap-2" data-testid="theme-actions">
           <button
             type="button"
-            data-testid="theme-new"
-            aria-label="New theme"
-            title="New theme"
-            onClick={() => newTheme()}
+            data-testid="theme-clear-history"
+            aria-label="Clear history"
+            title={
+              hasHistory
+                ? 'Clear this theme\u2019s undo history. The colours are not touched.'
+                : 'No history to clear'
+            }
+            disabled={!hasHistory}
+            onClick={() => setClearing(true)}
             style={{
-              ...flatIconButtonStyle,
-              borderRight: `2px solid ${colors.BORDER}`,
-              color: colors.AC1,
+              border: 'none',
+              background: 'transparent',
+              padding: '0 4px',
+              height: 24,
+              fontSize: 10,
+              fontWeight: 600,
+              letterSpacing: '.02em',
+              whiteSpace: 'nowrap',
+              color: hasHistory ? colors.FG2 : '#5A5A62',
+              cursor: hasHistory ? 'pointer' : 'default',
             }}
           >
-            <IconPlus size={15} />
+            Clear history
           </button>
-          <button
-            type="button"
-            data-testid="theme-import"
-            aria-label="Import theme"
-            title="Import a theme file"
-            onClick={pickFile}
-            style={{ ...flatIconButtonStyle, color: colors.FG2 }}
-          >
-            <IconFileImport size={15} />
-          </button>
+          <span className="flex">
+            <button
+              type="button"
+              data-testid="theme-new"
+              aria-label="New theme"
+              title="New theme"
+              onClick={() => newTheme()}
+              style={{
+                ...flatIconButtonStyle,
+                borderRight: `2px solid ${colors.BORDER}`,
+                color: colors.AC1,
+              }}
+            >
+              <IconPlus size={15} />
+            </button>
+            <button
+              type="button"
+              data-testid="theme-import"
+              aria-label="Import theme"
+              title="Import a theme file"
+              onClick={pickFile}
+              style={{ ...flatIconButtonStyle, color: colors.FG2 }}
+            >
+              <IconFileImport size={15} />
+            </button>
+          </span>
         </div>
       ) : (
         <div className="mb-3 flex items-center justify-between gap-2">
@@ -320,7 +367,22 @@ const ThemeLibrary: React.FC<ThemeLibraryProps> = ({ compact = false }) => {
             Themes ·{' '}
             <span data-testid="theme-count">{themes.length}</span>
           </h2>
-          <div className="ml-auto flex gap-1">
+          <div className="ml-auto flex items-center gap-1">
+            <button
+              type="button"
+              data-testid="theme-clear-history"
+              aria-label="Clear history"
+              title={
+                hasHistory
+                  ? 'Clear this theme\u2019s undo history. The colours are not touched.'
+                  : 'No history to clear'
+              }
+              disabled={!hasHistory}
+              onClick={() => setClearing(true)}
+              className="mr-1 rounded px-1.5 py-1 text-xs text-muted-foreground hover:text-foreground disabled:cursor-default disabled:opacity-40 disabled:hover:text-muted-foreground"
+            >
+              Clear history
+            </button>
             <Button
               size="sm"
               data-testid="theme-new"
@@ -341,6 +403,48 @@ const ThemeLibrary: React.FC<ThemeLibraryProps> = ({ compact = false }) => {
               Import
             </Button>
           </div>
+        </div>
+      )}
+
+      {/* One confirmation, inline — the same shape as a row's delete confirmation. It says
+          what it does and what it does not: the colours are untouched, and only the open
+          theme's history goes. */}
+      {clearing && (
+        <div
+          data-testid="theme-clear-confirm"
+          role="group"
+          aria-label="Clear undo history"
+          className="mb-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs"
+          style={{ color: colors.FG2 }}
+        >
+          <span>
+            Clear the undo history for{' '}
+            <span style={{ color: colors.FG1, fontWeight: 600 }}>{themeName}</span>? Its
+            colours stay as they are.
+          </span>
+          <button
+            type="button"
+            data-testid="theme-clear-yes"
+            title={`Clear the history for ${themeName}`}
+            className="underline"
+            style={{ color: colors.ERROR }}
+            onClick={() => {
+              setClearing(false)
+              clearHistory()
+            }}
+          >
+            Clear history
+          </button>
+          <button
+            type="button"
+            data-testid="theme-clear-no"
+            title="Keep the history"
+            className="underline"
+            style={{ color: colors.FG2 }}
+            onClick={() => setClearing(false)}
+          >
+            Cancel
+          </button>
         </div>
       )}
 

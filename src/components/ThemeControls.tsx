@@ -27,8 +27,41 @@ import {
 } from '@/components/ui/tooltip'
 
 import { ModeToggle } from './ModeToggle'
+import { RedoIcon, UndoIcon } from './icons/HistoryIcons'
 
 import { ColorScheme } from '@/lib/types/colors'
+
+/**
+ * The saved indicator. Its only job is to be honest, so every state is derived from the
+ * library rather than from a timer of its own: a pending debounce says `Saving…`, a refused
+ * write says `Not saved` (never `Saved`), and `Saved` appears only after a write landed.
+ * `aria-live` announces the transition once, quietly.
+ */
+const SaveStateChip: React.FC<{ state: 'saving' | 'saved' | 'error' | 'unsaved' }> = ({
+  state,
+}) => {
+  const copy =
+    state === 'saving'
+      ? { text: 'Saving…', tone: 'text-muted-foreground', title: 'Saving this theme' }
+      : state === 'saved'
+        ? { text: 'Saved', tone: 'text-muted-foreground', title: 'This theme is saved in your browser' }
+        : state === 'error'
+          ? { text: 'Not saved', tone: 'text-destructive', title: 'The last save was refused — the library may be full' }
+          : { text: 'Not saved', tone: 'text-destructive', title: 'Nothing has been written to the library yet' }
+
+  return (
+    <span
+      data-testid="save-state"
+      data-state={state}
+      role="status"
+      aria-live="polite"
+      title={copy.title}
+      className={`ml-2 select-none text-[11px] tabular-nums ${copy.tone}`}
+    >
+      {copy.text}
+    </span>
+  )
+}
 
 interface ThemeControlsProps {
   /**
@@ -53,6 +86,11 @@ const ThemeControls: React.FC<ThemeControlsProps> = ({ compact = false }) => {
     randomizeTheme,
     regenerateUnlocked,
     regenerateAnsiColors,
+    undo,
+    redo,
+    canUndo,
+    canRedo,
+    saveState,
   } = useTheme()
 
   // There is no mount-time randomize any more: the provider bootstraps a full theme
@@ -105,7 +143,42 @@ const ThemeControls: React.FC<ThemeControlsProps> = ({ compact = false }) => {
     <section className={`flex flex-col ${compact ? 'gap-2' : 'gap-5'} w-full`}>
       {/* The module title bar already carries the name on mobile, so only the desktop layout
           renders its own heading. */}
-      {!compact && <h2 className="text-xl font-semibold">Theme Controls</h2>}
+      {!compact && (
+        <div
+          data-testid="controls-header"
+          className="flex items-center justify-between gap-3"
+        >
+          <h2 className="text-xl font-semibold">Theme Controls</h2>
+          <div className="flex items-center gap-1">
+            {/* The pair is icon-only and borderless in both layouts: the desktop row and the
+                mobile title bar read the same. `disabled` is the attribute, not just a
+                fade — a greyed button that still fires would be a lie about the stack. */}
+            <button
+              type="button"
+              data-testid="undo"
+              aria-label="Undo"
+              title="Undo (Ctrl+Z)"
+              disabled={!canUndo}
+              onClick={undo}
+              className="flex h-6 w-6 items-center justify-center border-0 bg-transparent p-0 text-muted-foreground hover:text-foreground disabled:cursor-default disabled:opacity-30 disabled:hover:text-muted-foreground"
+            >
+              <UndoIcon />
+            </button>
+            <button
+              type="button"
+              data-testid="redo"
+              aria-label="Redo"
+              title="Redo (Ctrl+Shift+Z)"
+              disabled={!canRedo}
+              onClick={redo}
+              className="flex h-6 w-6 items-center justify-center border-0 bg-transparent p-0 text-muted-foreground hover:text-foreground disabled:cursor-default disabled:opacity-30 disabled:hover:text-muted-foreground"
+            >
+              <RedoIcon />
+            </button>
+            <SaveStateChip state={saveState} />
+          </div>
+        </div>
+      )}
       <TooltipProvider>
         <div className={compact ? 'flex gap-2' : 'flex gap-5'}>
           <div className="flex flex-1 items-end gap-4">

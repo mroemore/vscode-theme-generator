@@ -11,6 +11,7 @@ import ExportSemanticButton from '@/components/ExportSemanticButton'
 import ThemeControls from '@/components/ThemeControls'
 import ThemeLibrary from '@/components/ThemeLibrary'
 import ThemePreview from '@/components/ThemePreview'
+import { RedoIcon, UndoIcon } from '@/components/icons/HistoryIcons'
 
 import BulkLockControls from './BulkLockControls'
 import ColorStrip from './ColorStrip'
@@ -50,6 +51,57 @@ const LABELS: Record<ModuleId, string> = {
 // The editor preview is a viewer, not a control surface, so it holds no pinned slot: no pin
 // control is drawn and a pin stored by an older session is ignored on restore (spec §6.2).
 const NOT_PINNABLE: ReadonlySet<PinTarget> = new Set<PinTarget>(['preview'])
+
+/**
+ * The undo pair for the controls module's `actions` slot. It follows the title bar's own
+ * icon idiom exactly — 24 px, square, borderless, transparent, no second row of its own —
+ * because a module action that drew a card of its own would break the flat language the
+ * rest of the shell keeps (see `Module`'s pin control and `BulkLockControls`).
+ *
+ * The `disabled` attribute is what makes the ends of the stack read as ends; the colour
+ * change is only how that lands on screen.
+ */
+const HistoryActions: React.FC = () => {
+  const { undo, redo, canUndo, canRedo } = useTheme()
+
+  const action = (
+    testid: string,
+    label: string,
+    disabled: boolean,
+    onClick: () => void,
+    icon: React.ReactNode
+  ) => (
+    <button
+      type="button"
+      data-testid={testid}
+      aria-label={label}
+      title={disabled ? `Nothing to ${label.toLowerCase()}` : label}
+      disabled={disabled}
+      onClick={onClick}
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        width: 24,
+        height: 24,
+        padding: 0,
+        border: 'none',
+        background: 'transparent',
+        color: disabled ? '#5A5A62' : '#8E8E96',
+        cursor: disabled ? 'default' : 'pointer',
+      }}
+    >
+      {icon}
+    </button>
+  )
+
+  return (
+    <span style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+      {action('undo', 'Undo', !canUndo, undo, <UndoIcon />)}
+      {action('redo', 'Redo', !canRedo, redo, <RedoIcon />)}
+    </span>
+  )
+}
 
 const MobileShell: React.FC = () => {
   const { activeColor, themes, libraryLoaded } = useTheme()
@@ -104,7 +156,11 @@ const MobileShell: React.FC = () => {
     ModuleId,
     { title: string; count?: number; actions?: React.ReactNode; node: React.ReactNode }
   > = {
-    controls: { title: 'Theme Controls', node: <ThemeControls compact /> },
+    controls: {
+      title: 'Theme Controls',
+      actions: <HistoryActions />,
+      node: <ThemeControls compact />,
+    },
     themes: {
       title: 'Themes',
       // No count until the library has been read: `themes` is [] before the read, so an
