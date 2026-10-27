@@ -72,6 +72,24 @@ const SaveStateChip: React.FC<{ state: 'saving' | 'saved' | 'error' | 'unsaved' 
   )
 }
 
+/**
+ * The one line that says what an imported palette is.
+ *
+ * A palette-only theme carries colours, not generator settings: the hue, scheme and
+ * mode controls re-resolve the whole palette from the inputs, so touching one replaces
+ * the imported colours with generated ones. The line is *inline* — the warning used to
+ * live in a tooltip on a disabled button, and a disabled button does not take the
+ * pointer, so the warning was invisible exactly where it mattered.
+ */
+const ImportedPaletteNote: React.FC<{ compact?: boolean }> = ({ compact = false }) => (
+  <p
+    data-testid="imported-palette-note"
+    className={`${compact ? 'text-[10px]' : 'text-[11px]'} text-muted-foreground`}
+  >
+    Imported palette — generator controls will replace it
+  </p>
+)
+
 interface ThemeControlsProps {
   /**
    * The mobile layout (spec §3.6): the four actions become one row of icon-only buttons, Base Hue
@@ -105,10 +123,11 @@ const ThemeControls: React.FC<ThemeControlsProps> = ({ compact = false }) => {
   } = useTheme()
 
   // A palette-only theme — a foreign import — carries colours, not generator settings.
-  // It cannot be regenerated, so the buttons that say otherwise must not pretend it can:
-  // both of them re-resolve the whole palette from the inputs, which would replace the
-  // imported colours with generated ones. (The Randomize buttons are left alone: they
-  // honestly say they generate a *new* theme.)
+  // The generator controls (hue, scheme, mode) re-resolve the whole palette from the
+  // inputs, so touching one replaces the imported colours with generated ones. That
+  // used to be hidden behind a tooltip on a *disabled* button, which a pointer cannot
+  // reach — so the warning was invisible exactly where it mattered. It is an inline
+  // line now, in the header, where it can be read.
   const paletteOnly = themes.find((theme) => theme.id === themeId)?.paletteOnly === true
 
   // There is no mount-time randomize any more: the provider bootstraps a full theme
@@ -147,10 +166,7 @@ const ThemeControls: React.FC<ThemeControlsProps> = ({ compact = false }) => {
       icon: <IconRefresh size={16} />,
       onClick: regenerateUnlocked,
       disabled: paletteOnly,
-      hint: paletteOnly
-        ? 'This theme was imported from a file: it carries colours, not generator settings, ' +
-          'so there is nothing to regenerate.'
-        : 'Slightly adjust the current theme, keeping locked colors unchanged',
+      hint: 'Slightly adjust the current theme, keeping locked colors unchanged',
     },
     {
       key: 'regenerate-ansi',
@@ -158,10 +174,7 @@ const ThemeControls: React.FC<ThemeControlsProps> = ({ compact = false }) => {
       icon: <IconTerminal2 size={16} />,
       onClick: regenerateAnsiColors,
       disabled: paletteOnly,
-      hint: paletteOnly
-        ? 'This theme was imported from a file: its terminal colours came from the file, ' +
-          'so there is nothing to regenerate.'
-        : 'Regenerate terminal colors based on the current theme',
+      hint: 'Regenerate terminal colors based on the current theme',
     },
   ]
 
@@ -172,39 +185,46 @@ const ThemeControls: React.FC<ThemeControlsProps> = ({ compact = false }) => {
       {!compact && (
         <div
           data-testid="controls-header"
-          className="flex items-center justify-between gap-3"
+          className="flex flex-col gap-1"
         >
-          <h2 className="text-xl font-semibold">Theme Controls</h2>
-          <div className="flex items-center gap-1">
-            {/* The pair is icon-only and borderless in both layouts: the desktop row and the
-                mobile title bar read the same. `disabled` is the attribute, not just a
-                fade — a greyed button that still fires would be a lie about the stack. */}
-            <button
-              type="button"
-              data-testid="undo"
-              aria-label="Undo"
-              title="Undo (Ctrl+Z)"
-              disabled={!canUndo}
-              onClick={undo}
-              className="flex h-6 w-6 items-center justify-center border-0 bg-transparent p-0 text-muted-foreground hover:text-foreground disabled:cursor-default disabled:opacity-30 disabled:hover:text-muted-foreground"
-            >
-              <UndoIcon />
-            </button>
-            <button
-              type="button"
-              data-testid="redo"
-              aria-label="Redo"
-              title="Redo (Ctrl+Shift+Z)"
-              disabled={!canRedo}
-              onClick={redo}
-              className="flex h-6 w-6 items-center justify-center border-0 bg-transparent p-0 text-muted-foreground hover:text-foreground disabled:cursor-default disabled:opacity-30 disabled:hover:text-muted-foreground"
-            >
-              <RedoIcon />
-            </button>
-            <SaveStateChip state={saveState} />
+          <div className="flex items-center justify-between gap-3">
+            <h2 className="text-xl font-semibold">Theme Controls</h2>
+            <div className="flex items-center gap-1">
+              {/* The pair is icon-only and borderless in both layouts: the desktop row and the
+                  mobile title bar read the same. `disabled` is the attribute, not just a
+                  fade — a greyed button that still fires would be a lie about the stack. */}
+              <button
+                type="button"
+                data-testid="undo"
+                aria-label="Undo"
+                title="Undo (Ctrl+Z)"
+                disabled={!canUndo}
+                onClick={undo}
+                className="flex h-6 w-6 items-center justify-center border-0 bg-transparent p-0 text-muted-foreground hover:text-foreground disabled:cursor-default disabled:opacity-30 disabled:hover:text-muted-foreground"
+              >
+                <UndoIcon />
+              </button>
+              <button
+                type="button"
+                data-testid="redo"
+                aria-label="Redo"
+                title="Redo (Ctrl+Shift+Z)"
+                disabled={!canRedo}
+                onClick={redo}
+                className="flex h-6 w-6 items-center justify-center border-0 bg-transparent p-0 text-muted-foreground hover:text-foreground disabled:cursor-default disabled:opacity-30 disabled:hover:text-muted-foreground"
+              >
+                <RedoIcon />
+              </button>
+              <SaveStateChip state={saveState} />
+            </div>
           </div>
+          {/* The header is the desktop layout's own header, so the note lands here — and the
+              compact layout puts it at the top of its own stack, because the mobile surface
+              must say it too. */}
+          {paletteOnly && <ImportedPaletteNote />}
         </div>
       )}
+      {compact && paletteOnly && <ImportedPaletteNote compact />}
       <TooltipProvider>
         <div className={compact ? 'flex gap-2' : 'flex gap-5'}>
           <div className="flex flex-1 items-end gap-4">
