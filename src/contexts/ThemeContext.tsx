@@ -16,11 +16,14 @@ import {
 } from '@/lib/utils/syntaxColors'
 import { resolveAnsiColors } from '@/lib/utils/ansiColors'
 import { pickLocked, relinkPalette, resolvePalette } from '@/lib/themes/resolve'
+import { applyPatch } from '@/lib/themes/diff'
+import type { ThemePatch } from '@/lib/themes/diff'
 import { openRecord } from '@/lib/themes/record'
 import { MAX_IMPORT_BYTES, parseImport, parseImportAsNew } from '@/lib/themes/importer'
 import type { ImportResult } from '@/lib/themes/importer'
 import { useLibrary } from '@/hooks/useLibrary'
 import type { ThemeSummary } from '@/hooks/useLibrary'
+import { useHistory } from '@/hooks/useHistory'
 import type { SavedTheme, ThemeInputs, ThemePalette } from '@/lib/themes/schema'
 import { ColorScheme } from '@/lib/types/colors'
 import { drawTheme, redrawAnsi } from '@/lib/colors/assignment'
@@ -137,11 +140,29 @@ interface ThemeContextType {
   importFile: (file: File, options?: { asNew?: boolean }) => Promise<ImportResult>
   renameTheme: (id: string, name: string) => void
   deleteTheme: (id: string) => void
+  /** Step back one edit of the open theme. A no-op when `canUndo` is false. */
+  undo: () => void
+  /** Reapply the step an undo moved back over. A no-op when `canRedo` is false. */
+  redo: () => void
+  /** An earlier step exists for the *open* theme; another theme's steps are never reachable. */
+  canUndo: boolean
+  /** An undone step is still redoable for the open theme. */
+  canRedo: boolean
+  /** Drop the open theme's whole history. */
+  clearHistory: () => void
+  /** Open a gesture: every commit until the matching `endGesture` becomes one step. */
+  beginGesture: () => void
+  /** Close the open gesture, recording its accumulated edit as one step. */
+  endGesture: () => void
 }
 
 /** What a commit may do besides mutating the state. Both default to on. */
 interface CommitOptions {
-  /** Record a history step. Wired in Task 12; accepted now so call sites do not churn. */
+  /**
+   * Record a history step. `false` marks a programmatic correction (the resolved-mode
+   * adoption) or an adoption: it pushes nothing AND closes any gesture still open, so a
+   * missed `pointerup` cannot leak into it.
+   */
   record?: boolean
   /** Schedule the debounced auto-save. */
   save?: boolean
@@ -288,6 +309,45 @@ export const ThemeProvider: React.FC<{
     stateRef.current = bootstrap(resolvedTheme !== 'light', BOOTSTRAP_SEED)
   }
 
+  // ── History ─────────────────────────────────────────────────────────────────
+  // The stack lives in the hook; the provider supplies the two things only it can: the
+  // live snapshot a gesture anchors at, and the adoption of an applied patch.
+
+  /**
+   * Adopt the state one history patch produces (design §4.3). The patch restored the
+   * *base* palettes, so the displayed ones are re-derived by `relink`; the record is
+   * saved (debounced, through the same path every edit uses); and a patch that flips
+   * `isDark` must reach next-themes or <html> keeps the old class and the restored
+   * palette is unreadable in the new mode.
+   */
+  const restoreSnapshot = useCallback(
+    (patch: ThemePatch) => {
+      const next = relink(applyPatch(stateRef.current as ThemeState, patch))
+      stateRef.current = next
+      setVersion((v) => v + 1)
+      if (patch.entries.some((entry) => entry.path === 'isDark')) {
+        setTheme(next.isDark ? 'dark' : 'light')
+      }
+      scheduleSave(next)
+    },
+    [scheduleSave, setTheme]
+  )
+
+  // Stable: the hook calls it at `pointerdown`, and a new identity every render would
+  // re-register the gesture listeners mid-drag.
+  const snapshotTheme = useCallback(() => stateRef.current as ThemeState, [])
+
+  const {
+    recordEdit,
+    beginGesture,
+    endGesture,
+    undo,
+    redo,
+    canUndo,
+    canRedo,
+    clearHistory,
+  } = useHistory({ themeId, snapshot: snapshotTheme, restore: restoreSnapshot })
+
   const commit = useCallback(
     (mutate: (s: ThemeState) => ThemeState, opts: CommitOptions = {}) => {
       const before = stateRef.current as ThemeState
@@ -297,9 +357,12 @@ export const ThemeProvider: React.FC<{
       // The save is the *only* writer of a record; it no-ops until the library is read,
       // so this cannot overwrite a saved theme with the bootstrap palette.
       if (opts.save !== false) scheduleSave(after)
-      // history wiring lands in Task 12 (opts.record)
+      // `record: false` is a programmatic correction, not an edit: push nothing, and close
+      // any gesture still open so its stale anchor cannot swallow this commit.
+      if (opts.record === false) endGesture()
+      else recordEdit(before, after)
     },
-    [scheduleSave]
+    [scheduleSave, endGesture, recordEdit]
   )
 
   /**
@@ -328,6 +391,9 @@ export const ThemeProvider: React.FC<{
    * one write that lets generator fixes reach it.
    */
   const adoptOpenTheme = useCallback((open: OpenedTheme) => {
+    // An adoption is not an edit: it pushes no step. Closing any open gesture first keeps a
+    // stale anchor from spanning the adoption into the next edit.
+    endGesture()
     const live = stateRef.current as ThemeState
     const inputs = open.inputs
     const base: ThemeState = {
@@ -353,7 +419,7 @@ export const ThemeProvider: React.FC<{
     }
     stateRef.current = relink(base)
     setVersion((v) => v + 1)
-  }, [])
+  }, [endGesture])
 
   // Adopt the mode next-themes actually resolved, once it knows. The bootstrap above has
   // to guess; this corrects it without touching the assignment, so the palette merely
@@ -818,6 +884,13 @@ export const ThemeProvider: React.FC<{
     importFile,
     renameTheme,
     deleteTheme,
+    undo,
+    redo,
+    canUndo,
+    canRedo,
+    clearHistory,
+    beginGesture,
+    endGesture,
   }
 
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>
