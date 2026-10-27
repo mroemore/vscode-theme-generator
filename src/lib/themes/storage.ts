@@ -89,6 +89,14 @@ type SetResult = 'ok' | 'quota'
  */
 export type IndexWriteResult = SetResult | 'locked'
 
+/**
+ * A theme write can also be *refused*: the stored record belongs to a newer app
+ * version, so this write is not permitted to clobber it. A refusal is never a success
+ * — the bytes on disk are unchanged — so a caller that read `'ok'` there would be
+ * claiming a save that never happened.
+ */
+export type ThemeWriteResult = SetResult | 'refused'
+
 /** Write one key, reporting quota exhaustion (or any write failure) as `'quota'`. */
 function safeSet(store: Resolved, key: string, value: string): SetResult {
   if (store === null || store === undefined) return 'quota'
@@ -240,11 +248,17 @@ export function readAllThemes(
  *
  * Refuses to overwrite a stored record whose `schemaVersion` is higher than the
  * incoming one (design §2.3 / Review Focus 3): a newer app version's theme must not
- * be downgraded by an older tab, so the stored bytes are left exactly as they are
- * and the write reports `'ok'` — nothing was wrong with *this* write, it was simply
- * not permitted to clobber.
+ * be downgraded by an older tab, so the stored bytes are left exactly as they are.
+ *
+ * The refusal is reported as `'refused'`, not `'ok'`. Nothing was wrong with *this*
+ * write — it was simply not permitted to clobber — but nothing was written either,
+ * and a caller that reads `'ok'` would say "saved" over bytes that never moved. The
+ * one place that claims a save is the one place that wrote.
  */
-export function writeTheme(theme: SavedTheme, store: Resolved = browserStore()): SetResult {
+export function writeTheme(
+  theme: SavedTheme,
+  store: Resolved = browserStore()
+): ThemeWriteResult {
   if (store === null || store === undefined) return 'quota'
 
   const existing = safeGet(store, themeKey(theme.id))
@@ -257,7 +271,7 @@ export function writeTheme(theme: SavedTheme, store: Resolved = browserStore()):
     }
     if (parsed !== undefined && typeof parsed === 'object' && parsed !== null) {
       const version = (parsed as { schemaVersion?: unknown }).schemaVersion
-      if (typeof version === 'number' && version > theme.schemaVersion) return 'ok'
+      if (typeof version === 'number' && version > theme.schemaVersion) return 'refused'
     }
   }
 

@@ -242,8 +242,13 @@ export function useLibrary(): LibraryController {
     if (result === 'quota') {
       setLastError(EMPTY_LIBRARY_MESSAGE)
       setSaveError(EMPTY_LIBRARY_MESSAGE)
+    } else if (result === 'refused') {
+      // The stored record belongs to a newer app version, so the write did not land.
+      // The chip must not claim it did: "Saved" over bytes that never moved is the one
+      // lie this indicator exists to avoid. The library strip says why.
+      setLastError(READ_ONLY_MESSAGE)
+      setSaveError(READ_ONLY_MESSAGE)
     } else {
-      // `'ok'` also covers writeTheme's refusal to downgrade a newer record (Task 5).
       setLastError(null)
       setSaveError(null)
       setLastSavedAt(now)
@@ -357,6 +362,12 @@ export function useLibrary(): LibraryController {
         setLastError(EMPTY_LIBRARY_MESSAGE)
         return null
       }
+      if (result === 'refused') {
+        // A newer app version's record is under this id: it is not ours to overwrite,
+        // so the create fails rather than filing a theme nobody can read back.
+        setLastError(READ_ONLY_MESSAGE)
+        return null
+      }
 
       const next: LibraryIndex = {
         ...index,
@@ -395,8 +406,15 @@ export function useLibrary(): LibraryController {
       // overwrite whatever is stored under it.
       if (index.order.includes(record.id)) return null
 
-      if (writeTheme(record, store) === 'quota') {
+      const written = writeTheme(record, store)
+      if (written === 'quota') {
         setLastError(EMPTY_LIBRARY_MESSAGE)
+        return null
+      }
+      if (written === 'refused') {
+        // A newer app version's record is under this id: it is not ours to overwrite,
+        // so the import fails rather than filing a theme nobody can read back.
+        setLastError(READ_ONLY_MESSAGE)
         return null
       }
       const next: LibraryIndex = {
@@ -428,8 +446,15 @@ export function useLibrary(): LibraryController {
 
     const now = Date.now()
     const renamed: SavedTheme = { ...record, name: trimmed, updatedAt: now }
-    if (writeTheme(renamed, store) === 'quota') {
+    const written = writeTheme(renamed, store)
+    if (written === 'quota') {
       setLastError(EMPTY_LIBRARY_MESSAGE)
+      return false
+    }
+    if (written === 'refused') {
+      // The rename did not land, so it must not report one: the name in the catalogue
+      // would be a name the stored record does not carry.
+      setLastError(READ_ONLY_MESSAGE)
       return false
     }
 

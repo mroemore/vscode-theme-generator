@@ -51,7 +51,11 @@ const SaveStateChip: React.FC<{ state: 'saving' | 'saved' | 'error' | 'unsaved' 
       : state === 'saved'
         ? { text: 'Saved', tone: 'text-muted-foreground', title: 'This theme is saved in your browser' }
         : state === 'error'
-          ? { text: 'Not saved', tone: 'text-destructive', title: 'The last save was refused — the library may be full' }
+          ? {
+              text: 'Not saved',
+              tone: 'text-destructive',
+              title: 'The last save was refused — nothing was written',
+            }
           : { text: 'Unsaved', tone: 'text-muted-foreground', title: 'Nothing has been written to the library yet' }
 
   return (
