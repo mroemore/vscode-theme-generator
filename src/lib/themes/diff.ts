@@ -1,7 +1,7 @@
 // The undo/redo diff engine (design §4).
 //
 // A patch holds *authoritative* state only — the inputs, the three base palettes, the
-// links and the locks. `syntaxColors` / `ansiColors` are derived by `relink`, so storing
+// links, the locks and the foreign-theme flag (`paletteOnly`). `syntaxColors` / `ansiColors` are derived by `relink`, so storing
 // them would duplicate every entry and could drift from the base they came from; they
 // never appear in a patch and `applyPatch` never writes them.
 //
@@ -38,6 +38,17 @@ export interface PatchableState {
   baseAnsiColors: AnsiColors
   links: Links
   lockedColors: Set<string>
+  /**
+   * True while the theme is foreign (palette-only): the record keeps
+   * `inputs === undefined` and no metadata block is written. A generator control flips it
+   * to false — the conversion — and it must be part of that step's patch, or an undo of
+   * the conversion would restore the imported colours but leave the theme flagged as
+   * generated: a record whose `inputs` do not generate the colours it stores. As with
+   * every scalar here, a persisted patch from an older version that carries no
+   * `paletteOnly` entry leaves the field exactly as it was — `applyPatch` never defaults
+   * a path that is absent.
+   */
+  paletteOnly: boolean
 }
 
 /**
@@ -154,12 +165,16 @@ export function diffThemes(
   const entries: PatchEntry[] = []
 
   // Scalars, in a fixed order so a patch is reproducible from the same pair of states.
+  // `paletteOnly` is last on purpose: conversion steps were emitted before the flag was
+  // patchable, so a reader that asserts on a patch's shape sees the new path appended
+  // rather than interpolated.
   const scalars: [keyof PatchableState, unknown][] = [
     ['isDark', after.isDark],
     ['baseHue', after.baseHue],
     ['uiSaturation', after.uiSaturation],
     ['syntaxSaturation', after.syntaxSaturation],
     ['scheme', after.scheme],
+    ['paletteOnly', after.paletteOnly],
   ]
   for (const [path, next] of scalars) {
     const prev = before[path]
@@ -284,6 +299,12 @@ export function applyPatch<T extends PatchableState>(state: T, patch: ThemePatch
           break
         case 'scheme':
           next.scheme = after as ColorScheme
+          break
+        case 'paletteOnly':
+          // The conversion flag. Only a patch that names it writes it; an older patch
+          // that does not leaves the field as it was (the spread above), so a step
+          // recorded before the flag was patchable cannot convert a theme backwards.
+          next.paletteOnly = after as boolean
           break
         case 'assignment':
           // Copied, not aliased: the value belongs to a stored step and a later in-place

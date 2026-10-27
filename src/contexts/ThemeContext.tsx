@@ -342,6 +342,12 @@ export const ThemeProvider: React.FC<{
    * saved (debounced, through the same path every edit uses); and a patch that flips
    * `isDark` must reach next-themes or <html> keeps the old class and the restored
    * palette is unreadable in the new mode.
+   *
+   * `paletteOnly` rides the patch too (it is a `PatchableState` scalar now), so undoing
+   * a conversion lands back on `paletteOnly: true`: the save that follows writes a
+   * colour-only record again, with no `inputs` and no metadata block. The snapshot the
+   * gesture anchors at is the whole live `ThemeState` (`snapshotTheme` returns it
+   * uncloned), so the "before" flag is the live one by construction.
    */
   const restoreSnapshot = useCallback(
     (patch: ThemePatch) => {
