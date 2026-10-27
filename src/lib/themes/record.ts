@@ -12,6 +12,7 @@
 // always revert a target to the generator's seeded colour.
 
 import type { Links } from '@/lib/colors/links'
+import { canonicalString } from '@/lib/themes/canonical'
 import { resolvePalette } from '@/lib/themes/resolve'
 import { SCHEMA_VERSION } from '@/lib/themes/schema'
 import type {
@@ -177,4 +178,34 @@ export function openRecord(record: SavedTheme): {
     links: record.links,
     locks,
   }
+}
+
+/**
+ * Whether a live state is already what `stored` holds.
+ *
+ * The mount path adopts a record and re-resolves it, so most of the time the state that
+ * comes out is the state that went in. Writing it again is churn against a quota that may
+ * already be full — and it puts the saved chip into `Saving…` on every load.
+ *
+ * Only the *content* counts. The timestamp is new on every write and the hash follows the
+ * colours, so neither of them is a change worth a write. The locks are compared as a set:
+ * their order is bookkeeping, not meaning.
+ */
+export function isUnchanged(stored: SavedTheme, state: ThemeStateLike): boolean {
+  const candidate = toRecord(state, {
+    id: stored.id,
+    name: stored.name,
+    createdAt: stored.createdAt,
+    updatedAt: stored.updatedAt,
+    propsHash: stored.propsHash,
+  })
+  const same = (a: unknown, b: unknown): boolean =>
+    canonicalString(a ?? null) === canonicalString(b ?? null)
+  return (
+    same(stored.inputs, candidate.inputs) &&
+    same(stored.palette, candidate.palette) &&
+    same(stored.purePalette, candidate.purePalette) &&
+    same(stored.links, candidate.links) &&
+    same([...stored.locks].sort(), [...candidate.locks].sort())
+  )
 }

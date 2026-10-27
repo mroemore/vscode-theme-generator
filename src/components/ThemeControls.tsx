@@ -36,6 +36,11 @@ import { ColorScheme } from '@/lib/types/colors'
  * library rather than from a timer of its own: a pending debounce says `Saving…`, a refused
  * write says `Not saved` (never `Saved`), and `Saved` appears only after a write landed.
  * `aria-live` announces the transition once, quietly.
+ *
+ * Four states, four claims — and only one of them is an alarm. `unsaved` is the state a
+ * fresh app is in before the library has been read: nothing has been written yet, which
+ * is not a failure, so it gets its own quiet wording and the muted tone. The destructive
+ * tone is reserved for a write the library actually refused.
  */
 const SaveStateChip: React.FC<{ state: 'saving' | 'saved' | 'error' | 'unsaved' }> = ({
   state,
@@ -47,7 +52,7 @@ const SaveStateChip: React.FC<{ state: 'saving' | 'saved' | 'error' | 'unsaved' 
         ? { text: 'Saved', tone: 'text-muted-foreground', title: 'This theme is saved in your browser' }
         : state === 'error'
           ? { text: 'Not saved', tone: 'text-destructive', title: 'The last save was refused — the library may be full' }
-          : { text: 'Not saved', tone: 'text-destructive', title: 'Nothing has been written to the library yet' }
+          : { text: 'Unsaved', tone: 'text-muted-foreground', title: 'Nothing has been written to the library yet' }
 
   return (
     <span

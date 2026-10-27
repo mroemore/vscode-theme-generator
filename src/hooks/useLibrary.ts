@@ -155,6 +155,11 @@ export interface LibraryController {
   themeName: string
   lastSavedAt: number | null
   lastError: string | null
+  /**
+   * The message from a *save* the library refused, or null. Narrower than `lastError`:
+   * that one also carries conditions that are not a failed save.
+   */
+  saveError: string | null
   /** True while a debounced write is outstanding — the saved indicator's "Saving…". */
   saving: boolean
   /** Debounced write of a live state under the open record. No-op before the read. */
@@ -192,6 +197,11 @@ export function useLibrary(): LibraryController {
   const [themeName, setThemeName] = useState('Theme 1')
   const [lastSavedAt, setLastSavedAt] = useState<number | null>(null)
   const [lastError, setLastError] = useState<string | null>(null)
+  // The saved chip's failure. Separate from `lastError` because that one also carries
+  // conditions that are *not* a failed save — a refused create, a rename the library
+  // turned down — and a chip that reads "Not saved" because a rename failed would be
+  // claiming the theme was lost when it is sitting on disk untouched.
+  const [saveError, setSaveError] = useState<string | null>(null)
   // A save is waiting on the debounce. Kept as state, not just as `timerRef`, because the
   // saved indicator has to say "Saving…" while it is true — a ref would paint nothing.
   const [saving, setSaving] = useState(false)
@@ -231,9 +241,11 @@ export function useLibrary(): LibraryController {
 
     if (result === 'quota') {
       setLastError(EMPTY_LIBRARY_MESSAGE)
+      setSaveError(EMPTY_LIBRARY_MESSAGE)
     } else {
       // `'ok'` also covers writeTheme's refusal to downgrade a newer record (Task 5).
       setLastError(null)
+      setSaveError(null)
       setLastSavedAt(now)
     }
     publish(store)
@@ -284,7 +296,11 @@ export function useLibrary(): LibraryController {
     loadedRef.current = true
     setLibraryLoaded(true)
     if (index.currentId === null) return null
-    return records.find((record) => record.id === index.currentId) ?? null
+    const current = records.find((record) => record.id === index.currentId) ?? null
+    // The open record *is* saved: the chip must be able to say `Saved` for it even when
+    // the mount path writes nothing (the record is already current).
+    if (current !== null) setLastSavedAt(current.updatedAt)
+    return current
   }, [])
 
   const readRecord = useCallback((id: string): SavedTheme | null => {
@@ -472,6 +488,7 @@ export function useLibrary(): LibraryController {
     themeName,
     lastSavedAt,
     lastError,
+    saveError,
     saving,
     scheduleSave,
     flush,

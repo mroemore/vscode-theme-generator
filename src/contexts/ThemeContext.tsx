@@ -18,7 +18,7 @@ import { resolveAnsiColors } from '@/lib/utils/ansiColors'
 import { pickLocked, relinkPalette, resolvePalette } from '@/lib/themes/resolve'
 import { applyPatch } from '@/lib/themes/diff'
 import type { ThemePatch } from '@/lib/themes/diff'
-import { openRecord } from '@/lib/themes/record'
+import { isUnchanged, openRecord } from '@/lib/themes/record'
 import { MAX_IMPORT_BYTES, parseImport, parseImportAsNew } from '@/lib/themes/importer'
 import type { ImportResult } from '@/lib/themes/importer'
 import { useLibrary } from '@/hooks/useLibrary'
@@ -125,7 +125,9 @@ interface ThemeContextType {
    * What the saved indicator may truthfully claim. Derived once, here, so the desktop chip
    * cannot drift from the library: a pending write is `saving`, a refused one is `error`
    * (never `saved`), and `unsaved` means nothing has been written yet — which is the
-   * state of an app whose library refused the very first record.
+   * state of an app whose library has not been read, and of one whose very first record
+   * was refused. A library error that is *not* a failed save (a refused create, a rename
+   * the library turned down) leaves the chip alone: the theme on disk is untouched.
    */
   saveState: 'saving' | 'saved' | 'error' | 'unsaved'
   /** False until the index has been read after mount; the catalogue renders a skeleton. */
@@ -290,6 +292,7 @@ export const ThemeProvider: React.FC<{
     themeName,
     lastSavedAt,
     lastError,
+    saveError,
     saving,
     scheduleSave,
     flush,
@@ -457,9 +460,14 @@ export const ThemeProvider: React.FC<{
       if (open.inputs !== undefined) setTheme(open.inputs.isDark ? 'dark' : 'light')
       adoptCurrent({ id: record.id, name: record.name, createdAt: record.createdAt })
       writeCurrentId(record.id)
-      // Saved once: `openRecord` lets generator fixes reach untouched keys, and that is a
-      // new palette for the same record.
-      scheduleSave(stateRef.current as ThemeState)
+      // Saved once — but only if something changed. `openRecord` re-resolves the record,
+      // so a theme whose generator output has not moved comes back exactly as it went
+      // in, and writing that again is churn against a quota that may already be full
+      // (and it put the chip into `Saving…` on every load). A record that *has* moved —
+      // a generator fix reaching an old theme — still gets its write.
+      if (!isUnchanged(record, stateRef.current as ThemeState)) {
+        scheduleSave(stateRef.current as ThemeState)
+      }
       return
     }
 
@@ -886,7 +894,7 @@ export const ThemeProvider: React.FC<{
     lastError,
     saveState: saving
       ? 'saving'
-      : lastError !== null
+      : saveError !== null
         ? 'error'
         : lastSavedAt !== null
           ? 'saved'

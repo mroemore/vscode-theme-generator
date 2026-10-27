@@ -211,12 +211,14 @@ const ThemeLibrary: React.FC<ThemeLibraryProps> = ({ compact = false }) => {
   // list (New appends at the end). Without this the only feedback would be the count.
   // `block: 'nearest'` keeps it a no-op when the row is already visible.
   useEffect(() => {
+    // A pending "clear this theme's history?" belongs to the theme that was open when it
+    // was asked; a switch makes it a question about a different theme, so it is dropped.
+    // The reset runs *before* the early return: an emptied library leaves no open theme,
+    // and a question about a theme that no longer exists must not outlive it.
+    setClearing(false)
     if (themeId === null) return
     const row = listRef.current?.querySelector<HTMLElement>(`[data-theme-id="${themeId}"]`)
     row?.scrollIntoView({ block: 'nearest' })
-    // A pending "clear this theme's history?" belongs to the theme that was open when it was
-    // asked; a switch makes it a question about a different theme, so it is dropped.
-    setClearing(false)
   }, [themeId, themes.length])
 
   const rowHeight = compact ? 48 : 36
@@ -527,13 +529,32 @@ const ThemeLibrary: React.FC<ThemeLibraryProps> = ({ compact = false }) => {
       )}
 
       {lastError !== null && (
-        <p
+        <div
           data-testid="theme-error"
-          className="mb-2 text-xs"
+          className="mb-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs"
           style={{ color: colors.ERROR }}
         >
-          {lastError}
-        </p>
+          <span>{lastError}</span>
+          {/* The message names the remedy, so the strip has to offer it (spec §2.2 step 3).
+              The same action and the same one-question confirmation as the catalogue
+              header — one "clear history" in this panel, not two that disagree. */}
+          <button
+            type="button"
+            data-testid="theme-error-clear-history"
+            aria-label="Clear history"
+            title={
+              hasHistory
+                ? `Clear ${themeName}\u2019s undo history. The colours are not touched.`
+                : 'No history to clear'
+            }
+            disabled={!hasHistory}
+            onClick={() => setClearing(true)}
+            className="underline disabled:cursor-default disabled:no-underline disabled:opacity-60"
+            style={{ color: colors.ERROR }}
+          >
+            Clear history
+          </button>
+        </div>
       )}
 
       <div
